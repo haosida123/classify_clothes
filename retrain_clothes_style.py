@@ -1238,43 +1238,34 @@ def main(_):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    category = 'warm_up_skirt_length'
     parser.add_argument(
         '--image_dir',
         type=str,
-        default='C:\\NN\\flower_photos',
+        default='C:/NN/clothes_styles/warm_up_train_20180201/Images/skirt_length_labels',
         help='Path to folders of labeled images.'
     )
     parser.add_argument(
+        '--saved_model_dir',
+        type=str,
+        default='/tmp/'+ category + '/saved_models/',
+        help='Where to save the exported graph.')
+    parser.add_argument(
         '--output_graph',
         type=str,
-        default='/tmp/output_graph.pb',
+        default='/tmp/'+ category + '/output_graph.pb',
         help='Where to save the trained graph.'
-    )
-    parser.add_argument(
-        '--intermediate_output_graphs_dir',
-        type=str,
-        default='/tmp/intermediate_graph/',
-        help='Where to save the intermediate graphs.'
-    )
-    parser.add_argument(
-        '--intermediate_store_frequency',
-        type=int,
-        default=0,
-        help="""\
-         How many steps to store intermediate graph. If "0" then will not
-         store.\
-      """
     )
     parser.add_argument(
         '--output_labels',
         type=str,
-        default='/tmp/output_labels.txt',
+        default='/tmp/'+ category + '/output_labels.txt',
         help='Where to save the trained graph\'s labels.'
     )
     parser.add_argument(
         '--summaries_dir',
         type=str,
-        default='/tmp/retrain_logs',
+        default='/tmp/'+ category + '/retrain_logs',
         help='Where to save summary logs for TensorBoard.'
     )
     parser.add_argument(
@@ -1358,7 +1349,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--bottleneck_dir',
         type=str,
-        default='/tmp/bottleneck',
+        default='/tmp/'+ category + '/bottleneck',
         help='Path to cache bottleneck layer values as files.'
     )
     parser.add_argument(
@@ -1405,6 +1396,21 @@ if __name__ == '__main__':
       """
     )
     parser.add_argument(
+        '--intermediate_output_graphs_dir',
+        type=str,
+        default='/tmp/'+ category + '/intermediate_graph/',
+        help='Where to save the intermediate graphs.'
+    )
+    parser.add_argument(
+        '--intermediate_store_frequency',
+        type=int,
+        default=0,
+        help="""\
+         How many steps to store intermediate graph. If "0" then will not
+         store.\
+      """
+    )
+    parser.add_argument(
         '--architecture',
         type=str,
         default='inception_v3',
@@ -1418,10 +1424,5 @@ if __name__ == '__main__':
       takes 128x128 images. See https://research.googleblog.com/2017/06/mobilenets-open-source-models-for.html
       for more information on Mobilenet.\
       """)
-    parser.add_argument(
-        '--saved_model_dir',
-        type=str,
-        default='/tmp/saved_models/1/',
-        help='Where to save the exported graph.')
     FLAGS, unparsed = parser.parse_known_args()
     tf.app.run(main=main, argv=[sys.argv[0]] + unparsed)
