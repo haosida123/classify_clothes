@@ -116,16 +116,17 @@ import random
 import re
 import sys
 import tarfile
-
+import json
 import numpy as np
 from six.moves import urllib
 import tensorflow as tf
 
-from tensorflow.contrib.quantize.python import quant_ops
 from tensorflow.python.framework import graph_util
 from tensorflow.python.framework import tensor_shape
 from tensorflow.python.platform import gfile
 from tensorflow.python.util import compat
+
+from my_final_layer import add_final_training_ops
 
 FLAGS = None
 
@@ -734,112 +735,6 @@ def add_input_distortions(flip_left_right, random_crop, random_scale,
     return jpeg_data, distort_result
 
 
-def variable_summaries(var):
-    """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
-    with tf.name_scope('summaries'):
-        mean = tf.reduce_mean(var)
-        tf.summary.scalar('mean', mean)
-        with tf.name_scope('stddev'):
-            stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
-        tf.summary.scalar('stddev', stddev)
-        tf.summary.scalar('max', tf.reduce_max(var))
-        tf.summary.scalar('min', tf.reduce_min(var))
-        tf.summary.histogram('histogram', var)
-
-
-def add_final_training_ops(class_count, final_tensor_name, bottleneck_tensor,
-                           bottleneck_tensor_size, quantize_layer):
-    """Adds a new softmax and fully-connected layer for training.
-
-    We need to retrain the top layer to identify our new classes, so this function
-    adds the right operations to the graph, along with some variables to hold the
-    weights, and then sets up all the gradients for the backward pass.
-
-    The set up for the softmax and fully-connected layers is based on:
-    https://www.tensorflow.org/versions/master/tutorials/mnist/beginners/index.html
-
-    Args:
-      class_count: Integer of how many categories of things we're trying to
-          recognize.
-      final_tensor_name: Name string for the new final node that produces results.
-      bottleneck_tensor: The output of the main CNN graph.
-      bottleneck_tensor_size: How many entries in the bottleneck vector.
-      quantize_layer: Boolean, specifying whether the newly added layer should be
-          quantized.
-
-    Returns:
-      The tensors for the training and cross entropy results, and tensors for the
-      bottleneck input and ground truth input.
-    """
-    with tf.name_scope('input'):
-        bottleneck_input = tf.placeholder_with_default(
-            bottleneck_tensor,
-            shape=[None, bottleneck_tensor_size],
-            name='BottleneckInputPlaceholder')
-
-        ground_truth_input = tf.placeholder(
-            tf.int64, [None], name='GroundTruthInput')
-
-    # Organizing the following ops as `final_training_ops` so they're easier
-    # to see in TensorBoard
-    layer_name = 'final_training_ops'
-    with tf.name_scope(layer_name):
-        with tf.name_scope('weights'):
-            initial_value = tf.truncated_normal(
-                [bottleneck_tensor_size, class_count], stddev=0.001)
-            layer_weights = tf.Variable(initial_value, name='final_weights')
-            if quantize_layer:
-                quantized_layer_weights = quant_ops.MovingAvgQuantize(
-                    layer_weights, is_training=True)
-                variable_summaries(quantized_layer_weights)
-
-            variable_summaries(layer_weights)
-        with tf.name_scope('biases'):
-            layer_biases = tf.Variable(
-                tf.zeros([class_count]), name='final_biases')
-            if quantize_layer:
-                quantized_layer_biases = quant_ops.MovingAvgQuantize(
-                    layer_biases, is_training=True)
-                variable_summaries(quantized_layer_biases)
-
-            variable_summaries(layer_biases)
-
-        with tf.name_scope('Wx_plus_b'):
-            if quantize_layer:
-                logits = tf.matmul(bottleneck_input,
-                                   quantized_layer_weights) + quantized_layer_biases
-                logits = quant_ops.MovingAvgQuantize(
-                    logits,
-                    init_min=-32.0,
-                    init_max=32.0,
-                    is_training=True,
-                    num_bits=8,
-                    narrow_range=False,
-                    ema_decay=0.5)
-                tf.summary.histogram('pre_activations', logits)
-            else:
-                logits = tf.matmul(
-                    bottleneck_input, layer_weights) + layer_biases
-                tf.summary.histogram('pre_activations', logits)
-
-    final_tensor = tf.nn.softmax(logits, name=final_tensor_name)
-
-    tf.summary.histogram('activations', final_tensor)
-
-    with tf.name_scope('cross_entropy'):
-        cross_entropy_mean = tf.losses.sparse_softmax_cross_entropy(
-            labels=ground_truth_input, logits=logits)
-
-    tf.summary.scalar('cross_entropy', cross_entropy_mean)
-
-    with tf.name_scope('train'):
-        optimizer = tf.train.GradientDescentOptimizer(FLAGS.learning_rate)
-        train_step = optimizer.minimize(cross_entropy_mean)
-
-    return (train_step, cross_entropy_mean, bottleneck_input, ground_truth_input,
-            final_tensor)
-
-
 def add_evaluation_step(result_tensor, ground_truth_tensor):
     """Inserts the operations we need to evaluate the accuracy of our results.
 
@@ -1063,32 +958,45 @@ def main(_):
     tf.logging.set_verbosity(tf.logging.INFO)
 
     # Prepare necessary directories that can be used during training
-    prepare_file_system()
+    # prepare_file_system()
 
-    # Gather information about the model architecture we'll be using.
-    model_info = create_model_info(FLAGS.architecture)
-    if not model_info:
-        tf.logging.error('Did not recognize architecture flag')
-        return -1
+    if os.path.exists(FLAGS.meta_graph):
+        restart_graph = True
+        new_saver = tf.train.import_meta_graph(FLAGS.meta_graph)
+        graph = tf.get_default_graph()
+    else:
+        restart_graph = False
+        # Gather information about the model architecture we'll be using.
+        model_info = create_model_info(FLAGS.architecture)
+        if not model_info:
+            tf.logging.error('Did not recognize architecture flag')
+            return -1
 
-    # Set up the pre-trained graph.
-    maybe_download_and_extract(model_info['data_url'])
-    graph, bottleneck_tensor, resized_image_tensor = (
-        create_model_graph(model_info))
+        # Set up the pre-trained graph.
+        maybe_download_and_extract(model_info['data_url'])
+        graph, bottleneck_tensor, resized_image_tensor = (
+            create_model_graph(model_info))
 
     # Look at the folder structure, and create lists of all the images.
-    image_lists = create_image_lists(FLAGS.image_dir, FLAGS.testing_percentage,
-                                     FLAGS.validation_percentage)
-    class_count = len(image_lists.keys())
-    if class_count == 0:
-        tf.logging.error(
-            'No valid folders of images found at ' + FLAGS.image_dir)
-        return -1
-    if class_count == 1:
-        tf.logging.error('Only one valid folder of images found at ' +
-                         FLAGS.image_dir +
-                         ' - multiple classes are needed for classification.')
-        return -1
+    if os.path.exists(FLAGS.ckpt_dir + '/image_lists.json'):
+        with open(FLAGS.ckpt_dir + '/image_lists.json', 'r') as f:
+            image_lists = json.load(f)
+        class_count = len(image_lists.keys())
+    else:
+        image_lists = create_image_lists(FLAGS.image_dir, FLAGS.testing_percentage,
+                                         FLAGS.validation_percentage)
+        class_count = len(image_lists.keys())
+        if class_count == 0:
+            tf.logging.error(
+                'No valid folders of images found at ' + FLAGS.image_dir)
+            return -1
+        if class_count == 1:
+            tf.logging.error('Only one valid folder of images found at ' +
+                             FLAGS.image_dir +
+                             ' - multiple classes are needed for classification.')
+            return -1
+        with open(FLAGS.ckpt_dir + '/image_lists.json', 'w') as f:
+            json.dump(image_lists, f)
 
     # See if the command-line flags mean we're applying any distortions.
     do_distort_images = should_distort_images(
@@ -1096,11 +1004,36 @@ def main(_):
         FLAGS.random_brightness)
 
     with tf.Session(graph=graph) as sess:
-        # Set up the image decoding sub-graph.
-        jpeg_data_tensor, decoded_image_tensor = add_jpeg_decoding(
-            model_info['input_width'], model_info['input_height'],
-            model_info['input_depth'], model_info['input_mean'],
-            model_info['input_std'])
+        if restart_graph is False:
+            # Set up the image decoding sub-graph.
+            jpeg_data_tensor, decoded_image_tensor = add_jpeg_decoding(
+                model_info['input_width'], model_info['input_height'],
+                model_info['input_depth'], model_info['input_mean'],
+                model_info['input_std'])
+        else:
+            # load saved graph if there is
+            ckpt = tf.train.get_checkpoint_state(FLAGS.ckpt_dir)
+            assert ckpt and ckpt.model_checkpoint_path
+            new_saver.restore(sess, ckpt.model_checkpoint_path)
+            # new_saver.restore(sess, FLAGS.ckpt_dir)
+            bottleneck_tensor = graph.get_tensor_by_name('pool_3/_reshape:0')
+            resized_image_tensor = graph.get_tensor_by_name('Mul:0')
+            jpeg_data_tensor = graph.get_tensor_by_name('DecodeJPGInput:0')
+            decoded_image_tensor = graph.get_tensor_by_name('Mul_1:0')
+            train_step = graph.get_operation_by_name(
+                'train/GradientDescent')
+            evaluation_step = graph.get_tensor_by_name(
+                'accuracy/accuracy/Mean:0')
+            prediction = graph.get_tensor_by_name(
+                'accuracy/correct_prediction/ArgMax:0')
+            cross_entropy = graph.get_tensor_by_name(
+                'cross_entropy/sparse_softmax_cross_entropy_loss/value:0')
+            bottleneck_input = graph.get_tensor_by_name(
+                'input/BottleneckInputPlaceholder:0')
+            ground_truth_input = graph.get_tensor_by_name(
+                'input/GroundTruthInput:0')
+            final_tensor = graph.get_tensor_by_name('final_result:0')
+            merged = graph.get_tensor_by_name('Merge/MergeSummary:0')
 
         if do_distort_images:
             # We will be applying distortions, so setup the operations we'll need.
@@ -1110,7 +1043,7 @@ def main(_):
                  FLAGS.random_brightness, model_info['input_width'],
                  model_info['input_height'], model_info['input_depth'],
                  model_info['input_mean'], model_info['input_std'])
-        else:
+        elif not os.path.exists(FLAGS.ckpt_dir + '/image_lists.json'):
             # We'll make sure we've calculated the 'bottleneck' image summaries and
             # cached them on disk.
             cache_bottlenecks(sess, image_lists, FLAGS.image_dir,
@@ -1118,27 +1051,30 @@ def main(_):
                               decoded_image_tensor, resized_image_tensor,
                               bottleneck_tensor, FLAGS.architecture)
 
-        # Add the new layer that we'll be training.
-        (train_step, cross_entropy, bottleneck_input, ground_truth_input,
-         final_tensor) = add_final_training_ops(
-             len(image_lists.keys()), FLAGS.final_tensor_name, bottleneck_tensor,
-             model_info['bottleneck_tensor_size'], model_info['quantize_layer'])
+        if restart_graph is False:
+            # Add the new layer that we'll be training.
+            (train_step, cross_entropy, bottleneck_input, ground_truth_input,
+             final_tensor) = add_final_training_ops(
+                len(image_lists.keys()), FLAGS.final_tensor_name, bottleneck_tensor,
+                model_info['bottleneck_tensor_size'], model_info['quantize_layer'], FLAGS.learning_rate)
 
-        # Create the operations we need to evaluate the accuracy of our new layer.
-        evaluation_step, prediction = add_evaluation_step(
-            final_tensor, ground_truth_input)
+            # Create the operations we need to evaluate the accuracy of our new layer.
+            evaluation_step, prediction = add_evaluation_step(
+                final_tensor, ground_truth_input)
 
-        # Merge all the summaries and write them out to the summaries_dir
-        merged = tf.summary.merge_all()
+            # TODO: should this summary block be run every time?
+            # Merge all the summaries and write them out to the summaries_dir
+            merged = tf.summary.merge_all()
+            # Set up all our weights to their initial default values.
+            init = tf.global_variables_initializer()
+            sess.run(init)
+            new_saver = tf.train.Saver()
+            tf.train.export_meta_graph(
+                filename=FLAGS.ckpt_dir + '/new_graph.meta')
         train_writer = tf.summary.FileWriter(FLAGS.summaries_dir + '/train',
                                              sess.graph)
-
         validation_writer = tf.summary.FileWriter(
             FLAGS.summaries_dir + '/validation')
-
-        # Set up all our weights to their initial default values.
-        init = tf.global_variables_initializer()
-        sess.run(init)
 
         # Run the training for as many cycles as requested on the command line.
         for i in range(FLAGS.how_many_training_steps):
@@ -1189,9 +1125,12 @@ def main(_):
                     feed_dict={bottleneck_input: validation_bottlenecks,
                                ground_truth_input: validation_ground_truth})
                 validation_writer.add_summary(validation_summary, i)
-                tf.logging.info('%s: Step %d: Validation accuracy = %.1f%% (N=%d)' %
-                                (datetime.now(), i, validation_accuracy * 100,
-                                 len(validation_bottlenecks)))
+                tf.logging.info('%s: Step %d: Validation acc = %.1f%%' %
+                                (datetime.now(), i, validation_accuracy * 100))
+            if (i % (10 * FLAGS.eval_step_interval)) == 0 or is_last_step:
+                new_saver.save(sess, FLAGS.ckpt_dir + '/checkpoint',
+                               global_step=i, write_meta_graph=False)
+                tf.logging.info('......checkpoint saved......')
 
             # Store intermediate results
             intermediate_frequency = FLAGS.intermediate_store_frequency
@@ -1246,6 +1185,16 @@ if __name__ == '__main__':
         help='Path to folders of labeled images.'
     )
     parser.add_argument(
+        '--meta_graph',
+        type=str,
+        default='/tmp/' + category + '/new_graph.meta',
+        help='Where to save/load the meta graph.')
+    parser.add_argument(
+        '--ckpt_dir',
+        type=str,
+        default='/tmp/' + category,
+        help='Where to save the check points.')
+    parser.add_argument(
         '--saved_model_dir',
         type=str,
         default='/tmp/' + category + '/saved_models/',
@@ -1271,7 +1220,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--how_many_training_steps',
         type=int,
-        default=4000,
+        default=1000,
         help='How many training steps to run before ending.'
     )
     parser.add_argument(
@@ -1301,7 +1250,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--train_batch_size',
         type=int,
-        default=100,
+        default=120,
         help='How many images to train on at a time.'
     )
     parser.add_argument(
@@ -1318,7 +1267,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--validation_batch_size',
         type=int,
-        default=100,
+        default=120,
         help="""\
       How many images to use in an evaluation batch. This validation set is
       used much more often than the test set, and is an early indicator of how
