@@ -1013,10 +1013,13 @@ def main(_):
         else:
             # load saved graph if there is
             ckpt = tf.train.get_checkpoint_state(FLAGS.ckpt_dir)
-            assert ckpt and ckpt.model_checkpoint_path
-            new_saver.restore(sess, ckpt.model_checkpoint_path)
-            # new_saver.restore(sess, FLAGS.ckpt_dir)
-            bottleneck_tensor = graph.get_tensor_by_name('pool_3/_reshape:0')
+            if not (ckpt and ckpt.model_checkpoint_path):
+                init = tf.global_variables_initializer()
+                sess.run(init)
+            else:
+                new_saver.restore(sess, ckpt.model_checkpoint_path)
+            bottleneck_tensor = graph.get_tensor_by_name(
+                'pool_3/_reshape:0')
             resized_image_tensor = graph.get_tensor_by_name('Mul:0')
             jpeg_data_tensor = graph.get_tensor_by_name('DecodeJPGInput:0')
             decoded_image_tensor = graph.get_tensor_by_name('Mul_1:0')
@@ -1034,6 +1037,7 @@ def main(_):
                 'input/GroundTruthInput:0')
             final_tensor = graph.get_tensor_by_name('final_result:0')
             merged = graph.get_tensor_by_name('Merge/MergeSummary:0')
+            counter = graph.get_tensor_by_name('step_counter:0')
 
         if do_distort_images:
             # We will be applying distortions, so setup the operations we'll need.
@@ -1053,16 +1057,19 @@ def main(_):
 
         if restart_graph is False:
             # Add the new layer that we'll be training.
+            global_step = tf.Variable(-1, trainable=False, name='global_step')
+            counter = tf.assign_add(global_step, 1, name='step_counter')
             (train_step, cross_entropy, bottleneck_input, ground_truth_input,
              final_tensor) = add_final_training_ops(
-                len(image_lists.keys()), FLAGS.final_tensor_name, bottleneck_tensor,
-                model_info['bottleneck_tensor_size'], model_info['quantize_layer'], FLAGS.learning_rate)
+                 global_step, len(image_lists.keys()),
+                 FLAGS.final_tensor_name, bottleneck_tensor,
+                 model_info['bottleneck_tensor_size'], model_info['quantize_layer'],
+                 FLAGS.learning_rate)
 
             # Create the operations we need to evaluate the accuracy of our new layer.
             evaluation_step, prediction = add_evaluation_step(
                 final_tensor, ground_truth_input)
 
-            # TODO: should this summary block be run every time?
             # Merge all the summaries and write them out to the summaries_dir
             merged = tf.summary.merge_all()
             # Set up all our weights to their initial default values.
@@ -1077,7 +1084,8 @@ def main(_):
             FLAGS.summaries_dir + '/validation')
 
         # Run the training for as many cycles as requested on the command line.
-        for i in range(FLAGS.how_many_training_steps):
+        for j in range(FLAGS.training_steps):
+            i = sess.run(counter)
             # Get a batch of input bottleneck values, either calculated fresh every
             # time with distortions applied, or from the cache stored on disk.
             if do_distort_images:
@@ -1102,16 +1110,17 @@ def main(_):
             train_writer.add_summary(train_summary, i)
 
             # Every so often, print out how well the graph is training.
-            is_last_step = (i + 1 == FLAGS.how_many_training_steps)
+            is_last_step = (i + 1 == FLAGS.training_steps)
+            if (i % (10 * FLAGS.eval_step_interval)) == 0 or is_last_step:
+                new_saver.save(sess, FLAGS.ckpt_dir + '/checkpoint',
+                               global_step=i, write_meta_graph=False)
+                tf.logging.info('%s: Step %d: ' % (datetime.now(), i))
+                tf.logging.info('checkpoint saved.')
             if (i % FLAGS.eval_step_interval) == 0 or is_last_step:
                 train_accuracy, cross_entropy_value = sess.run(
                     [evaluation_step, cross_entropy],
                     feed_dict={bottleneck_input: train_bottlenecks,
                                ground_truth_input: train_ground_truth})
-                tf.logging.info('%s: Step %d: Train accuracy = %.1f%%' %
-                                (datetime.now(), i, train_accuracy * 100))
-                tf.logging.info('%s: Step %d: Cross entropy = %f' %
-                                (datetime.now(), i, cross_entropy_value))
                 validation_bottlenecks, validation_ground_truth, _ = (
                     get_random_cached_bottlenecks(
                         sess, image_lists, FLAGS.validation_batch_size, 'validation',
@@ -1125,12 +1134,8 @@ def main(_):
                     feed_dict={bottleneck_input: validation_bottlenecks,
                                ground_truth_input: validation_ground_truth})
                 validation_writer.add_summary(validation_summary, i)
-                tf.logging.info('%s: Step %d: Validation acc = %.1f%%' %
-                                (datetime.now(), i, validation_accuracy * 100))
-            if (i % (10 * FLAGS.eval_step_interval)) == 0 or is_last_step:
-                new_saver.save(sess, FLAGS.ckpt_dir + '/checkpoint',
-                               global_step=i, write_meta_graph=False)
-                tf.logging.info('......checkpoint saved......')
+                tf.logging.info('Tra acc = %.1f%%   Cro ent = %f   Val acc = %.1f%%' %
+                                (train_accuracy * 100, cross_entropy_value, validation_accuracy * 100))
 
             # Store intermediate results
             intermediate_frequency = FLAGS.intermediate_store_frequency
@@ -1166,13 +1171,13 @@ def main(_):
                                     (test_filename,
                                      list(image_lists.keys())[predictions[i]]))
 
-        # Write out the trained graph and labels with the weights stored as
-        # constants.
-        save_graph_to_file(sess, graph, FLAGS.output_graph)
-        with gfile.FastGFile(FLAGS.output_labels, 'w') as f:
-            f.write('\n'.join(image_lists.keys()) + '\n')
+        # # Write out the trained graph and labels with the weights stored as
+        # # constants.
+        # save_graph_to_file(sess, graph, FLAGS.output_graph)
+        # with gfile.FastGFile(FLAGS.output_labels, 'w') as f:
+        #     f.write('\n'.join(image_lists.keys()) + '\n')
 
-        export_model(sess, FLAGS.architecture, FLAGS.saved_model_dir)
+        # export_model(sess, FLAGS.architecture, FLAGS.saved_model_dir)
 
 
 if __name__ == '__main__':
@@ -1218,7 +1223,7 @@ if __name__ == '__main__':
         help='Where to save summary logs for TensorBoard.'
     )
     parser.add_argument(
-        '--how_many_training_steps',
+        '--training_steps',
         type=int,
         default=1000,
         help='How many training steps to run before ending.'

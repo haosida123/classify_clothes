@@ -1,5 +1,8 @@
 import tensorflow as tf
-from tensorflow.contrib.quantize.python import quant_ops
+# from tensorflow.contrib.quantize.python import quant_ops
+
+DECAY_STEPS = 10000
+DECAY_RATE = 0.8
 
 
 def variable_summaries(var):
@@ -15,7 +18,7 @@ def variable_summaries(var):
         tf.summary.histogram('histogram', var)
 
 
-def add_final_training_ops(class_count, final_tensor_name, bottleneck_tensor,
+def add_final_training_ops(global_step, class_count, final_tensor_name, bottleneck_tensor,
                            bottleneck_tensor_size, quantize_layer, learning_rate):
     """Adds a new softmax and fully-connected layer for training.
 
@@ -44,163 +47,61 @@ def add_final_training_ops(class_count, final_tensor_name, bottleneck_tensor,
             bottleneck_tensor,
             shape=[None, bottleneck_tensor_size],
             name='BottleneckInputPlaceholder')
-
         ground_truth_input = tf.placeholder(
             tf.int64, [None], name='GroundTruthInput')
 
     # Organizing the following ops as `final_training_ops` so they're easier
     # to see in TensorBoard
     layer_name = 'final_training_ops'
+    n_weights1_colunm = 512
     with tf.name_scope(layer_name):
-        with tf.name_scope('weights'):
+        with tf.name_scope('weights1'):
             initial_value = tf.truncated_normal(
-                [bottleneck_tensor_size, class_count], stddev=0.001)
-            layer_weights = tf.Variable(initial_value, name='final_weights')
-            if quantize_layer:
-                quantized_layer_weights = quant_ops.MovingAvgQuantize(
-                    layer_weights, is_training=True)
-                variable_summaries(quantized_layer_weights)
+                [bottleneck_tensor_size, n_weights1_colunm], stddev=0.01)
+            layer_weights1 = tf.Variable(initial_value, name='final_weights1')
+            variable_summaries(layer_weights1)
+        with tf.name_scope('biases1'):
+            initial_value = tf.truncated_normal(
+                [n_weights1_colunm], stddev=0.01)
+            layer_biases1 = tf.Variable(initial_value, name='final_biases1')
+            variable_summaries(layer_biases1)
+        with tf.name_scope('Wx_plus_b1'):
+            logits1 = tf.nn.relu(tf.matmul(
+                bottleneck_input, layer_weights1) + layer_biases1)
+            tf.summary.histogram('pre_activations1', logits1)
 
-            variable_summaries(layer_weights)
-        with tf.name_scope('biases'):
-            layer_biases = tf.Variable(
-                tf.zeros([class_count]), name='final_biases')
-            if quantize_layer:
-                quantized_layer_biases = quant_ops.MovingAvgQuantize(
-                    layer_biases, is_training=True)
-                variable_summaries(quantized_layer_biases)
+        with tf.name_scope('weights2'):
+            initial_value = tf.truncated_normal(
+                [n_weights1_colunm, class_count], stddev=0.01)
+            layer_weights2 = tf.Variable(initial_value, name='final_weights2')
+            variable_summaries(layer_weights2)
+        with tf.name_scope('biases2'):
+            initial_value = tf.truncated_normal([class_count], stddev=0.01)
+            layer_biases2 = tf.Variable(initial_value, name='final_biases2')
+            variable_summaries(layer_biases2)
+        with tf.name_scope('Wx_plus_b2'):
+            logits2 = tf.matmul(logits1, layer_weights2) + layer_biases2
+            tf.summary.histogram('pre_activations2', logits2)
 
-            variable_summaries(layer_biases)
-
-        with tf.name_scope('Wx_plus_b'):
-            if quantize_layer:
-                logits = tf.matmul(bottleneck_input,
-                                   quantized_layer_weights) + quantized_layer_biases
-                logits = quant_ops.MovingAvgQuantize(
-                    logits,
-                    init_min=-32.0,
-                    init_max=32.0,
-                    is_training=True,
-                    num_bits=8,
-                    narrow_range=False,
-                    ema_decay=0.5)
-                tf.summary.histogram('pre_activations', logits)
-            else:
-                logits = tf.matmul(
-                    bottleneck_input, layer_weights) + layer_biases
-                tf.summary.histogram('pre_activations', logits)
-
-    final_tensor = tf.nn.softmax(logits, name=final_tensor_name)
+    final_tensor = tf.nn.softmax(logits2, name=final_tensor_name)
 
     tf.summary.histogram('activations', final_tensor)
 
     with tf.name_scope('cross_entropy'):
         cross_entropy_mean = tf.losses.sparse_softmax_cross_entropy(
-            labels=ground_truth_input, logits=logits)
+            labels=ground_truth_input, logits=logits2)
 
     tf.summary.scalar('cross_entropy', cross_entropy_mean)
 
+    # Decay the learning rate exponentially based on the number of steps.
+    exp_learning_rate = tf.train.exponential_decay(learning_rate,
+                                                   global_step,
+                                                   DECAY_STEPS,
+                                                   DECAY_RATE)
+    tf.summary.scalar('learning_rate', exp_learning_rate)
     with tf.name_scope('train'):
-        optimizer = tf.train.GradientDescentOptimizer(learning_rate)
+        optimizer = tf.train.GradientDescentOptimizer(exp_learning_rate)
         train_step = optimizer.minimize(cross_entropy_mean)
 
     return (train_step, cross_entropy_mean, bottleneck_input, ground_truth_input,
             final_tensor)
-
-
-'''
-original:
-
-def add_final_training_ops(class_count, final_tensor_name, bottleneck_tensor,
-                           bottleneck_tensor_size, quantize_layer):
-    """Adds a new softmax and fully-connected layer for training.
-
-    We need to retrain the top layer to identify our new classes, so this function
-    adds the right operations to the graph, along with some variables to hold the
-    weights, and then sets up all the gradients for the backward pass.
-
-    The set up for the softmax and fully-connected layers is based on:
-    https://www.tensorflow.org/versions/master/tutorials/mnist/beginners/index.html
-
-    Args:
-      class_count: Integer of how many categories of things we're trying to
-          recognize.
-      final_tensor_name: Name string for the new final node that produces results.
-      bottleneck_tensor: The output of the main CNN graph.
-      bottleneck_tensor_size: How many entries in the bottleneck vector.
-      quantize_layer: Boolean, specifying whether the newly added layer should be
-          quantized.
-
-    Returns:
-      The tensors for the training and cross entropy results, and tensors for the
-      bottleneck input and ground truth input.
-    """
-    with tf.name_scope('input'):
-        bottleneck_input = tf.placeholder_with_default(
-            bottleneck_tensor,
-            shape=[None, bottleneck_tensor_size],
-            name='BottleneckInputPlaceholder')
-
-        ground_truth_input = tf.placeholder(
-            tf.int64, [None], name='GroundTruthInput')
-
-    # Organizing the following ops as `final_training_ops` so they're easier
-    # to see in TensorBoard
-    layer_name = 'final_training_ops'
-    with tf.name_scope(layer_name):
-        with tf.name_scope('weights'):
-            initial_value = tf.truncated_normal(
-                [bottleneck_tensor_size, class_count], stddev=0.001)
-            layer_weights = tf.Variable(initial_value, name='final_weights')
-            if quantize_layer:
-                quantized_layer_weights = quant_ops.MovingAvgQuantize(
-                    layer_weights, is_training=True)
-                variable_summaries(quantized_layer_weights)
-
-            variable_summaries(layer_weights)
-        with tf.name_scope('biases'):
-            layer_biases = tf.Variable(
-                tf.zeros([class_count]), name='final_biases')
-            if quantize_layer:
-                quantized_layer_biases = quant_ops.MovingAvgQuantize(
-                    layer_biases, is_training=True)
-                variable_summaries(quantized_layer_biases)
-
-            variable_summaries(layer_biases)
-
-        with tf.name_scope('Wx_plus_b'):
-            if quantize_layer:
-                logits = tf.matmul(bottleneck_input,
-                                   quantized_layer_weights) + quantized_layer_biases
-                logits = quant_ops.MovingAvgQuantize(
-                    logits,
-                    init_min=-32.0,
-                    init_max=32.0,
-                    is_training=True,
-                    num_bits=8,
-                    narrow_range=False,
-                    ema_decay=0.5)
-                tf.summary.histogram('pre_activations', logits)
-            else:
-                logits = tf.matmul(
-                    bottleneck_input, layer_weights) + layer_biases
-                tf.summary.histogram('pre_activations', logits)
-
-    final_tensor = tf.nn.softmax(logits, name=final_tensor_name)
-
-    tf.summary.histogram('activations', final_tensor)
-
-    with tf.name_scope('cross_entropy'):
-        cross_entropy_mean = tf.losses.sparse_softmax_cross_entropy(
-            labels=ground_truth_input, logits=logits)
-
-    tf.summary.scalar('cross_entropy', cross_entropy_mean)
-
-    with tf.name_scope('train'):
-        optimizer = tf.train.GradientDescentOptimizer(FLAGS.learning_rate)
-        train_step = optimizer.minimize(cross_entropy_mean)
-
-    return (train_step, cross_entropy_mean, bottleneck_input, ground_truth_input,
-            final_tensor)
-
-'''
