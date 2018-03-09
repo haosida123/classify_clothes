@@ -960,11 +960,14 @@ def main(_):
     # Prepare necessary directories that can be used during training
     # prepare_file_system()
 
-    if os.path.exists(FLAGS.meta_graph):
+    meta_graph = FLAGS.ckpt_dir + '/new_graph.meta'
+    if os.path.exists(meta_graph):
+        print('restarting graph...')
         restart_graph = True
-        new_saver = tf.train.import_meta_graph(FLAGS.meta_graph)
+        new_saver = tf.train.import_meta_graph(meta_graph)
         graph = tf.get_default_graph()
     else:
+        print('creating new graph...')
         restart_graph = False
         # Gather information about the model architecture we'll be using.
         model_info = create_model_info(FLAGS.architecture)
@@ -1038,6 +1041,7 @@ def main(_):
             final_tensor = graph.get_tensor_by_name('final_result:0')
             merged = graph.get_tensor_by_name('Merge/MergeSummary:0')
             counter = graph.get_tensor_by_name('step_counter:0')
+            learning_rate = graph.get_tensor_by_name('learning_rate:0')
 
         if do_distort_images:
             # We will be applying distortions, so setup the operations we'll need.
@@ -1059,12 +1063,13 @@ def main(_):
             # Add the new layer that we'll be training.
             global_step = tf.Variable(-1, trainable=False, name='global_step')
             counter = tf.assign_add(global_step, 1, name='step_counter')
+            learning_rate = tf.placeholder(
+                tf.float32, shape=[], name='learning_rate')
             (train_step, cross_entropy, bottleneck_input, ground_truth_input,
              final_tensor) = add_final_training_ops(
                  global_step, len(image_lists.keys()),
                  FLAGS.final_tensor_name, bottleneck_tensor,
-                 model_info['bottleneck_tensor_size'], model_info['quantize_layer'],
-                 FLAGS.learning_rate)
+                 model_info['bottleneck_tensor_size'], learning_rate)
 
             # Create the operations we need to evaluate the accuracy of our new layer.
             evaluation_step, prediction = add_evaluation_step(
@@ -1101,12 +1106,14 @@ def main(_):
                      FLAGS.bottleneck_dir, FLAGS.image_dir, jpeg_data_tensor,
                      decoded_image_tensor, resized_image_tensor, bottleneck_tensor,
                      FLAGS.architecture)
+            feed_dict = {bottleneck_input: train_bottlenecks,
+                         ground_truth_input: train_ground_truth,
+                         learning_rate: FLAGS.learning_rate}
             # Feed the bottlenecks and ground truth into the graph, and run a training
             # step. Capture training summaries for TensorBoard with the `merged` op.
             train_summary, _ = sess.run(
                 [merged, train_step],
-                feed_dict={bottleneck_input: train_bottlenecks,
-                           ground_truth_input: train_ground_truth})
+                feed_dict=feed_dict)
             train_writer.add_summary(train_summary, i)
 
             # Every so often, print out how well the graph is training.
@@ -1119,8 +1126,7 @@ def main(_):
             if (i % FLAGS.eval_step_interval) == 0 or is_last_step:
                 train_accuracy, cross_entropy_value = sess.run(
                     [evaluation_step, cross_entropy],
-                    feed_dict={bottleneck_input: train_bottlenecks,
-                               ground_truth_input: train_ground_truth})
+                    feed_dict=feed_dict)
                 validation_bottlenecks, validation_ground_truth, _ = (
                     get_random_cached_bottlenecks(
                         sess, image_lists, FLAGS.validation_batch_size, 'validation',
@@ -1131,8 +1137,7 @@ def main(_):
                 # with the `merged` op.
                 validation_summary, validation_accuracy = sess.run(
                     [merged, evaluation_step],
-                    feed_dict={bottleneck_input: validation_bottlenecks,
-                               ground_truth_input: validation_ground_truth})
+                    feed_dict=feed_dict)
                 validation_writer.add_summary(validation_summary, i)
                 tf.logging.info('Tra acc = %.1f%%   Cro ent = %f   Val acc = %.1f%%' %
                                 (train_accuracy * 100, cross_entropy_value, validation_accuracy * 100))
@@ -1189,11 +1194,6 @@ if __name__ == '__main__':
         default='C:/NN/clothes_styles/warm_up_train_20180201/Images/skirt_length_labels',
         help='Path to folders of labeled images.'
     )
-    parser.add_argument(
-        '--meta_graph',
-        type=str,
-        default='/tmp/' + category + '/new_graph.meta',
-        help='Where to save/load the meta graph.')
     parser.add_argument(
         '--ckpt_dir',
         type=str,
