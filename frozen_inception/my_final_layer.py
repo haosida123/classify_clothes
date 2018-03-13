@@ -2,7 +2,7 @@ import tensorflow as tf
 # from tensorflow.contrib.quantize.python import quant_ops
 
 DECAY_STEPS = 10000
-DECAY_RATE = 0.96
+DECAY_RATE = 0.9
 
 
 def variable_summaries(var):
@@ -93,7 +93,7 @@ def add_final_training_ops(global_step, class_count, final_tensor_name, bottlene
                                                    DECAY_RATE)
     tf.summary.scalar('learning_rate', exp_learning_rate)
     with tf.name_scope('train'):
-        optimizer = tf.train.GradientDescentOptimizer(exp_learning_rate)
+        optimizer = tf.train.RMSPropOptimizer(exp_learning_rate)
         train_step = optimizer.minimize(cross_entropy_mean)
 
     return (train_step, cross_entropy_mean, bottleneck_input, ground_truth_input,
