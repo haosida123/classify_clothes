@@ -273,7 +273,7 @@ def get_bottleneck_path(image_lists, label_name, index, bottleneck_dir,
       File system path string to an image that meets the requested parameters.
     """
     return get_image_path(image_lists, label_name, index, bottleneck_dir,
-                          category) + '_' + architecture + '.txt'
+                          category) + '_' + architecture + '.npy'
 
 
 def create_model_graph(model_info):
@@ -393,9 +393,7 @@ def create_bottleneck_file(bottleneck_path, image_lists, label_name, index,
     except Exception as e:
         raise RuntimeError('Error during processing file %s (%s)' % (image_path,
                                                                      str(e)))
-    bottleneck_string = ','.join(str(x) for x in bottleneck_values)
-    with open(bottleneck_path, 'w') as bottleneck_file:
-        bottleneck_file.write(bottleneck_string)
+    np.save(bottleneck_path, bottleneck_values)
 
 
 def get_or_create_bottleneck(sess, image_lists, label_name, index, image_dir,
@@ -438,11 +436,12 @@ def get_or_create_bottleneck(sess, image_lists, label_name, index, image_dir,
                                image_dir, category, sess, jpeg_data_tensor,
                                decoded_image_tensor, resized_input_tensor,
                                bottleneck_tensor)
-    with open(bottleneck_path, 'r') as bottleneck_file:
-        bottleneck_string = bottleneck_file.read()
+    # with open(bottleneck_path, 'r') as bottleneck_file:
+    #     bottleneck_string = bottleneck_file.read()
     did_hit_error = False
     try:
-        bottleneck_values = [float(x) for x in bottleneck_string.split(',')]
+        bottleneck_values = np.load(bottleneck_path)
+        # bottleneck_values = [float(x) for x in bottleneck_string.split(',')]
     except ValueError:
         tf.logging.warning('Invalid float found, recreating bottleneck')
         did_hit_error = True
@@ -451,11 +450,12 @@ def get_or_create_bottleneck(sess, image_lists, label_name, index, image_dir,
                                image_dir, category, sess, jpeg_data_tensor,
                                decoded_image_tensor, resized_input_tensor,
                                bottleneck_tensor)
-        with open(bottleneck_path, 'r') as bottleneck_file:
-            bottleneck_string = bottleneck_file.read()
+        bottleneck_values = np.load(bottleneck_path)
+        # with open(bottleneck_path, 'r') as bottleneck_file:
+        #     bottleneck_string = bottleneck_file.read()
         # Allow exceptions to propagate here, since they shouldn't happen after a
         # fresh creation
-        bottleneck_values = [float(x) for x in bottleneck_string.split(',')]
+        # bottleneck_values = [float(x) for x in bottleneck_string.split(',')]
     return bottleneck_values
 
 

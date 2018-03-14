@@ -154,7 +154,8 @@ def InceptionV3(include_top=True,
         default_size=299,
         min_size=139,
         data_format=K.image_data_format(),
-        include_top=include_top)
+        require_flatten=False,
+        weights=weights)
 
     if input_tensor is None:
         img_input = Input(shape=input_shape)
@@ -398,12 +399,16 @@ def preprocess_input(x):
 if __name__ == '__main__':
     model = InceptionV3(include_top=True, weights='imagenet')
 
-    img_path = 'elephant.jpg'
-    img = image.load_img(img_path, target_size=(299, 299))
-    x = image.img_to_array(img)
-    x = np.expand_dims(x, axis=0)
+    img_paths = ['OBOG5055.JPG', 'wallhaven-220382.jpg',
+                 'wallhaven-295153.jpg', 'wallhaven-605824.jpg']
+    for img_path in img_paths:
+        print("img_path: {}".format(img_path))
+        img = image.load_img(img_path, target_size=(299, 299))
 
-    x = preprocess_input(x)
+        x = image.img_to_array(img)
+        x = np.expand_dims(x, axis=0)
 
-    preds = model.predict(x)
-    print('Predicted:', decode_predictions(preds))
+        x = preprocess_input(x)
+
+        preds = model.predict(x)
+        print('Predicted:', decode_predictions(preds))

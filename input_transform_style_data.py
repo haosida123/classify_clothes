@@ -102,8 +102,8 @@ def move(args):
 
 if __name__ == "__main__":
     a = argparse.ArgumentParser()
-    a.add_argument("--validate_percent", default=10)
-    a.add_argument("--test_percent", default=10)
+    a.add_argument("--validate_percent", default=0)
+    a.add_argument("--test_percent", default=0)
     a.add_argument("--image_dir", default=IMAGE_DIR)
     a.add_argument("--label_cat", default=LABEL_CAT)
     a.add_argument("--csv_file", default=CSV_FILE)

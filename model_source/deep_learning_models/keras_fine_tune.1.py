@@ -9,8 +9,7 @@ import numpy as np
 # from keras import __version__
 # from keras.models import model_from_json
 # from keras.applications.inception_v3 import InceptionV3, preprocess_input
-from model_source.deep_learning_models.inception_v3 import InceptionV3, preprocess_input
-#        , decode_predictions
+from inception_v3 import InceptionV3, preprocess_input, decode_predictions
 from keras.models import Model
 from keras.layers import Dense, GlobalAveragePooling2D
 # from keras.preprocessing.image import ImageDataGenerator
@@ -117,6 +116,25 @@ def main(args):
     # if not os.path.exists(model_file):
     base_model = InceptionV3(weights='imagenet', include_top=False)
     base_model = add_pooling_layer(base_model)
+    iv3_model = InceptionV3(weights='imagenet', include_top=True)
+    iv3_base_model = Model(inputs=iv3_model.input, outputs=iv3_model.layers[311].output)
+    img_paths = ['OBOG5055.JPG', 'wallhaven-220382.jpg',
+                 'wallhaven-295153.jpg', 'wallhaven-605824.jpg']
+    target_size = (IM_WIDTH, IM_HEIGHT)
+    for img_path in img_paths:
+        print("img_path: {}".format(img_path))
+        img = image.load_img(img_path, target_size=target_size)
+        x = image.img_to_array(img)
+        x = np.expand_dims(x, axis=0)
+        x = preprocess_input(x)
+        print("model: iv3_base_model")
+        preds = iv3_base_model.predict(x)
+        print(preds)
+        print("model: base_model")
+        preds = base_model.predict(x)
+        print(preds)
+    raise RuntimeError
+
     model = add_final_layer(base_model.input, base_model.output, n_classes)
     # model = add_new_last_layer(base_model, n_classes)
     # with open(model_file, 'w') as f:
@@ -132,9 +150,7 @@ def main(args):
 
     if args.transfer_learning:
         # use bottleneck, here the model must be identical to the original top layer
-        # print(base_model.output.shape)
-        retrain_input_tensor = Input(shape=(2048,))
-        print(retrain_input_tensor, retrain_input_tensor.shape)
+        retrain_input_tensor = Input(shape=base_model.output.shape)
         retrain_model = add_final_layer(
             retrain_input_tensor, retrain_input_tensor, n_classes)
         check_point_file = os.path.join(
@@ -187,10 +203,10 @@ def main(args):
                       loss='categorical_crossentropy', metrics=['accuracy'])
 
         history_ft = model.fit_generator(
-            train_generator,
+            train_sequence,
             steps_per_epoch=nb_train_samples // batch_size,
             epochs=nb_epoch,
-            validation_data=validation_generator,
+            validation_data=validation_data,
             validation_steps=nb_train_samples // batch_size,
             class_weight='auto')
         if not args.no_plot:
@@ -229,7 +245,7 @@ if __name__ == "__main__":
     a.add_argument("--no_plot", default=False, action='store_true')
     a.add_argument("--transfer_learning", default=True)
     a.add_argument("--fine_tune", default=False)
-    a.add_argument('--testing_percentage', type=int, default=0)
+    a.add_argument('--testing_percentage', type=int, default=10)
     a.add_argument('--validation_percentage', type=int, default=10)
 
     args = a.parse_args()
