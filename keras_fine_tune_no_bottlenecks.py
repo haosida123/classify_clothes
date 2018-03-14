@@ -5,7 +5,6 @@ import argparse
 import matplotlib.pyplot as plt
 import json
 import numpy as np
-from keras.preprocessing.image import ImageDataGenerator
 import random
 
 # from keras import __version__
@@ -20,7 +19,7 @@ from keras.optimizers import SGD
 from keras.callbacks import TensorBoard
 from keras.callbacks import ModelCheckpoint
 # from keras import backend as K
-from keras.layers import Input
+# from keras.layers import Input
 
 from keras.preprocessing import image
 
@@ -37,7 +36,7 @@ FINE_TUNE_FINAL_LAYER_NAME = 'mixed9'
 
 
 def feed_data(image_lists, category,
-                  image_dir, generator=False, how_many=None):
+              image_dir, generator=False, how_many=None):
     class_count = len(image_lists.keys())
     inputs, truths = [], []
     target_size = (IM_WIDTH, IM_HEIGHT)
@@ -49,9 +48,9 @@ def feed_data(image_lists, category,
                 label_name = list(image_lists.keys())[label_index]
                 image_index = random.randrange(MAX_NUM_IMAGES_PER_CLASS + 1)
                 file = get_image_path(image_lists, label_name, image_index,
-                                            image_dir, category)
+                                      image_dir, category)
                 img = image.load_img(file, target_size=target_size)
-                inp = preprocess_img(img)
+                inp = preprocess_img(img, expand_dim=False)
                 inputs.append(inp)
                 y = np.zeros(class_count)
                 y[label_index] = 1
@@ -62,9 +61,9 @@ def feed_data(image_lists, category,
             for image_index, image_name in enumerate(
                     image_lists[label_name][category]):
                 file = get_image_path(image_lists, label_name, image_index,
-                                            image_dir, category)
+                                      image_dir, category)
                 img = image.load_img(file, target_size=target_size)
-                inp = preprocess_img(img)
+                inp = preprocess_img(img, expand_dim=False)
                 inputs.append(inp)
                 y = np.zeros(class_count)
                 y[label_index] = 1
@@ -72,9 +71,10 @@ def feed_data(image_lists, category,
         return (np.array(inputs), np.array(truths))
 
 
-def preprocess_img(file):
-    x = image.img_to_array(file)
-    x = np.expand_dims(x, axis=0)
+def preprocess_img(img, expand_dim=True):
+    x = image.img_to_array(img)
+    if expand_dim:
+        x = np.expand_dims(x, axis=0)
     x = preprocess_input(x)
     return x
 
@@ -89,9 +89,7 @@ def predict_from_file(model, img_file):
     """
     target_size = (IM_WIDTH, IM_HEIGHT)
     img = image.load_img(img_file, target_size=target_size)
-    x = image.img_to_array(img)
-    x = np.expand_dims(x, axis=0)
-    x = preprocess_input(x)
+    x = preprocess_img(img)
     preds = model.predict(x)[0]
     return preds
 
@@ -155,7 +153,8 @@ def create_or_load_training_data(args):
 def main(args):
     """Use transfer learning and fine-tuning to train a network on a new dataset"""
 
-    n_classes = len(glob.glob(args.image_dir + "/*"))
+    n_classes = len(glob.glob(args.image_dir + "/*/"))
+    # print(n_classes)
     # nb_val_samples = get_nb_files(args.val_dir)
     nb_epoch = int(args.nb_epoch)
     batch_size = int(args.batch_size)
@@ -166,6 +165,7 @@ def main(args):
     base_model = InceptionV3(weights='imagenet', include_top=False)
     base_model = add_pooling_layer(base_model)
     model = add_final_layer(base_model.input, base_model.output, n_classes)
+    # print(model.input.shape, model.output.shape)
     # model = add_new_last_layer(base_model, n_classes)
     # with open(model_file, 'w') as f:
     #     f.write(model.to_json())
@@ -177,10 +177,8 @@ def main(args):
     image_lists, n_classes = create_or_load_training_data(args)
     nb_train_samples = get_nb_files(args.image_dir)
     print('total no. samples: {}'.format(nb_train_samples))
-    input_dir = os.path.join(
-        args.model_dir, 'input_retrain_keras/')
     train_sequence = feed_data(image_lists, 'training',
-        args.image_dir, True, args.batch_size)
+                               args.image_dir, True, args.batch_size)
     validation_data = feed_data(
         image_lists, 'validation', args.image_dir)
     if args.transfer_learning:
@@ -198,7 +196,7 @@ def main(args):
             model.load_weights(check_point_file)
 
         model.compile(optimizer='rmsprop',
-                              loss='categorical_crossentropy', metrics=['accuracy'])
+                      loss='categorical_crossentropy', metrics=['accuracy'])
 
         # args.model_dir, "weights-improvement-{epoch:02d}-{val_acc:.2f}.hdf5")
         checkpoint = ModelCheckpoint(check_point_file, monitor='val_acc',
