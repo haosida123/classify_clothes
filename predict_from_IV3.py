@@ -28,6 +28,7 @@ def predict(model, img):
     x = image.img_to_array(img)
     x = np.expand_dims(x, axis=0)
     x = preprocess_input(x)
+    print(model.predict(x))
     preds = model.predict(x)[0]
     return preds
 
@@ -43,7 +44,7 @@ def plot_preds(image, preds):
 
     plt.figure()
     labels = ("cat", "dog")
-    plt.barh([0, 1], preds, alpha=0.5)
+    plt.barh(range(len(preds)), preds, alpha=0.5)
     plt.yticks([0, 1], labels)
     plt.xlabel('Probability')
     plt.xlim(0, 1.01)
@@ -59,9 +60,10 @@ def main(args):
         print('creating new IV3 model...')
         model = InceptionV3()
         model.save(args.model_dir)
-    if args.image is not None:
-        img = Image.open(args.image)
+    if args.image_dir is not None:
+        img = Image.open(args.image_dir)
         preds = predict(model, img)
+        print(preds)
         plot_preds(img, preds)
 
     if args.image_url is not None:

@@ -26,13 +26,33 @@ from keras_inception_bottleneck import \
 
 IM_WIDTH, IM_HEIGHT = 299, 299  # fixed size for InceptionV3
 FC_SIZE = 1024
-BASE_MODEL_OUTPUT_LAYER_INDEX = 311
-BASE_MODEL_OUTPUT_LAYER_NAME = 'global_average_pooling2d_1'
+# BASE_MODEL_OUTPUT_LAYER_INDEX = 311
+# BASE_MODEL_OUTPUT_LAYER_NAME = 'global_average_pooling2d_1'
 FINE_TUNE_FINAL_LAYER_INDEX = 279
 FINE_TUNE_FINAL_LAYER_NAME = 'mixed9'
 
 
 def predict_from_file(model, img_file):
+    """Run model prediction on image
+    Args:
+      model: keras model
+      img_file: image path
+    Returns:
+      list of predicted labels and their probabilities
+    """
+    target_size = (IM_WIDTH, IM_HEIGHT)
+    img = Image.open(img_file)
+    if img.size != target_size:
+        img = img.resize(target_size)
+
+    x = image.img_to_array(img)
+    x = np.expand_dims(x, axis=0)
+    x = preprocess_input(x)
+    preds = model.predict(x)[0]
+    return preds
+
+
+def predict_from_file1(model, img_file):
     """Run model prediction on image
     Args:
       model: keras model
@@ -133,17 +153,12 @@ def main(args):
     print('total no. samples: {}'.format(nb_train_samples))
 
     if args.transfer_learning:
-        assert model.layers[BASE_MODEL_OUTPUT_LAYER_INDEX].name == BASE_MODEL_OUTPUT_LAYER_NAME
-        set_trainable_layers(
-            trainable_layer_list=model.layers[BASE_MODEL_OUTPUT_LAYER_INDEX + 1:],
-            frozen_layer_list=model.layers[:BASE_MODEL_OUTPUT_LAYER_INDEX + 1])
-
         # use bottleneck, here the model must be identical to the original top layer
-        retrain_input_tensor = Input(shape=(2048,))  # global average pooling
+        retrain_input_tensor = Input(shape=base_model.output.shape)
         retrain_model = add_final_layer(
             retrain_input_tensor, retrain_input_tensor, n_classes)
         check_point_file = os.path.join(
-            args.model_dir, "retrain_weights_best.hdf5")
+            args.model_dir, "retrain_weights_IV3.hdf5")
         if os.path.exists(check_point_file):
             print('loading checkpoint {}'.format(check_point_file))
             retrain_model.load_weights(check_point_file)
@@ -161,9 +176,9 @@ def main(args):
         train_sequence = cached_bottlenecks_sequence(
             image_lists, args.batch_size, 'training', bottleneck_dir,
             args.image_dir, bottle_pred_func)
-        validation_sequence = cached_bottlenecks_sequence(
+        validation_data = cached_bottlenecks_sequence(
             image_lists, args.validation_batch_size, 'validation', bottleneck_dir,
-            args.image_dir, bottle_pred_func)
+            args.image_dir, bottle_pred_func, sequence=False)
         # args.model_dir, "weights-improvement-{epoch:02d}-{val_acc:.2f}.hdf5")
         checkpoint = ModelCheckpoint(check_point_file, monitor='val_acc',
                                      verbose=1, save_best_only=True, mode='max',
@@ -175,9 +190,8 @@ def main(args):
             train_sequence,
             epochs=nb_epoch,
             steps_per_epoch=nb_train_samples // batch_size,
-            validation_data=(np.array(validation_sequence.x),
-                             np.array(validation_sequence.y)),
-            validation_steps=nb_train_samples // batch_size,
+            validation_data=validation_data,
+            validation_steps=nb_train_samples // batch_size * 5,
             class_weight='auto', callbacks=callbacks_list)
 
         if not args.no_plot:

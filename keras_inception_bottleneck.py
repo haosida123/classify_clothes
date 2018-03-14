@@ -290,7 +290,7 @@ class Image_Sequence(Sequence):
 
 
 def cached_bottlenecks_sequence(image_lists, how_many, category,
-                                bottleneck_dir, image_dir, bottle_func):
+                                bottleneck_dir, image_dir, bottle_func, sequence=True):
     """Retrieves bottleneck sequence for cached images.
 
     If no distortions are being applied, this function can retrieve the cached
@@ -299,7 +299,10 @@ def cached_bottlenecks_sequence(image_lists, how_many, category,
     """
     (bottlenecks, ground_truth, _) = get_random_cached_bottlenecks(
         image_lists, -1, category, bottleneck_dir, image_dir, bottle_func)
-    return Image_Sequence(bottlenecks, ground_truth, how_many)
+    if sequence:
+        return Image_Sequence(bottlenecks, ground_truth, how_many)
+    else:
+        return (np.array(bottlenecks), np.array(ground_truth))
 
 
 def get_random_cached_bottlenecks(image_lists, how_many, category,
