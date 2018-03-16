@@ -9,8 +9,10 @@ import sys
 import re
 from keras.utils import Sequence
 
+from model_source.deep_learning_models.inception_v3 import InceptionV3, preprocess_input
+from keras.models import Model
+from keras.layers import GlobalAveragePooling2D
 from keras_inception_bottleneck import get_image_path, create_image_lists
-from keras_fine_tune import gen_base_model, predict_from_img
 MAX_NUM_IMAGES_PER_CLASS = 2 ** 27 - 1  # ~134M
 IM_WIDTH, IM_HEIGHT = 299, 299  # fixed size for InceptionV3
 ARGS = None
@@ -19,6 +21,28 @@ WIDTH_SHIFT_RANGE = 0.2
 BRIGHTNESS_RANGE = (0.07, 1.4)
 SHEAR_RANGE = 0.2
 HORIZONTAL_FLIP = True
+
+
+def gen_base_model():
+    sub_base_model = InceptionV3(weights='imagenet', include_top=False)
+    x = sub_base_model.output
+    x = GlobalAveragePooling2D()(x)
+    return Model(inputs=sub_base_model.input, outputs=x)
+
+
+def predict_from_img(model, img):
+    """Run model prediction on image
+    Args:
+      model: keras model
+      img: image.load_img(img_file)
+    Returns:
+      list of predicted labels and their probabilities
+    """
+    x = image.img_to_array(img)
+    x = np.expand_dims(x, axis=0)
+    x = preprocess_input(x)
+    preds = model.predict(x)[0]
+    return preds
 
 
 def ensure_dir_exists(dir_name):
@@ -79,12 +103,14 @@ def get_or_create_bottleneck(
     target_size = (IM_WIDTH, IM_HEIGHT)
     image_file = get_image_path(
         image_lists, label_name, image_index, image_dir, category)
-    bottle_file = image_file + '_' + architecture + '.npy'
+    bottle_file = get_image_path(
+        image_lists, label_name, image_index, bottleneck_dir, category) +\
+        '_' + architecture + '.npy'
     try:
         bottleneck_values = np.load(bottle_file)
         return bottleneck_values
     except Exception as e:
-        print('Creating bottleneck\n{}'.format(e))
+        print('Bottleneck not found, creating bottleneck...\n{}'.format(e))
         if not distorted:
             img = image.load_img(image_file, target_size=target_size)
             np.save(bottle_file, bottle_func(img))
@@ -247,6 +273,7 @@ def cache_distort_bottlenecks(image_lists, bottle_func,
                         '_{}'.format(i) + '.jpg'
                     save_path = os.path.join(
                         label_bott_dir, distorted_image_name + '_' + architecture + '.npy')
+                    training_images.append(distorted_image_name)
                     if os.path.exists(save_path):
                         count('skipped')
                         continue
@@ -265,7 +292,6 @@ def cache_distort_bottlenecks(image_lists, bottle_func,
                         distorted_image.save(img_save_path)
                     bottleneck = bottle_func(distorted_image)
                     count()
-                    training_images.append(distorted_image_name)
                     np.save(save_path, bottleneck)
 
         distorted_image_lists[label_name] = {
@@ -278,6 +304,8 @@ def cache_distort_bottlenecks(image_lists, bottle_func,
 
 
 def main():
+    print('validation percent: {}\n test percent: {}'.format(
+        ARGS.validation_percentage, ARGS.testing_percentage))
     print('Obtaining image lists...')
     image_lists = create_or_load_training_data(
         ARGS.model_bottle_dir, ARGS.image_dir,
@@ -285,9 +313,8 @@ def main():
     print('Obtaining base model...')
     base_model = gen_base_model()
     print('Doing distortion...')
-    category = 'training'
     distorted_image_lists = cache_distort_bottlenecks(
-        image_lists, lambda img: predict_from_img(base_model, img), category)
+        image_lists, lambda img: predict_from_img(base_model, img))
     with open(ARGS.model_bottle_dir + '/distorted_image_lists.json', 'w') as f:
         json.dump(distorted_image_lists, f)
     print('Bottlenecks saved.')
@@ -302,8 +329,8 @@ if __name__ == "__main__":
         "--model_bottle_dir", default=r'C:\tmp\warm_up_skirt_length')
     a.add_argument("--save_image_perthousand", default=5, type=int)
     a.add_argument("--times_per_image", default=5, type=int)
-    a.add_argument('--testing_percentage', type=int, default=0)
-    a.add_argument('--validation_percentage', type=int, default=10)
+    a.add_argument('--testing_percentage', type=int, default=15)
+    a.add_argument('--validation_percentage', type=int, default=15)
     a.add_argument("--rotation_range", default=ROTATION_RANGE, type=int)
     a.add_argument("--width_shift_range", default=WIDTH_SHIFT_RANGE, type=float)
     a.add_argument("--brightness_low", default=BRIGHTNESS_RANGE[0], type=float)

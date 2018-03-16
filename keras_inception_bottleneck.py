@@ -30,6 +30,7 @@ import tensorflow as tf
 from keras.utils import Sequence
 from tensorflow.python.framework import tensor_shape
 from tensorflow.python.platform import gfile
+from keras.preprocessing import image
 
 FLAGS = None
 
@@ -38,6 +39,7 @@ FLAGS = None
 # sizes. If you want to adapt this script to work with another model, you will
 # need to update these to reflect the values in the network you're using.
 MAX_NUM_IMAGES_PER_CLASS = 2 ** 27 - 1  # ~134M
+IM_WIDTH, IM_HEIGHT = 299, 299  # fixed size for InceptionV3
 
 
 def create_image_lists(image_dir, testing_percentage, validation_percentage):
@@ -202,7 +204,9 @@ def create_bottleneck_file(bottleneck_path, image_lists, label_name, index,
     if not gfile.Exists(image_path):
         print('File does not exist %s', image_path)
     try:
-        bottleneck_values = bottle_func(image_path)
+        target_size = (IM_WIDTH, IM_HEIGHT)
+        img = image.load_img(image_path, target_size=target_size)
+        bottleneck_values = bottle_func(img)
     except Exception as e:
         raise RuntimeError('Error during processing file %s (%s)' % (image_path,
                                                                      str(e)))
