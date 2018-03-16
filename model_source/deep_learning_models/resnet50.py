@@ -190,7 +190,8 @@ def ResNet50(include_top=True, weights='imagenet',
                                       default_size=224,
                                       min_size=197,
                                       data_format=K.image_data_format(),
-                                      include_top=include_top)
+                                      require_flatten=include_top,
+                                      weights=weights)
 
     if input_tensor is None:
         img_input = Input(shape=input_shape)
@@ -288,12 +289,18 @@ def ResNet50(include_top=True, weights='imagenet',
 if __name__ == '__main__':
     model = ResNet50(include_top=True, weights='imagenet')
 
-    img_path = 'elephant.jpg'
-    img = image.load_img(img_path, target_size=(224, 224))
-    x = image.img_to_array(img)
-    x = np.expand_dims(x, axis=0)
-    x = preprocess_input(x)
-    print('Input image shape:', x.shape)
+    img_paths = ['hikari-mitsushima-hd-background-love-exposure-1114002125.jpg',
+                 'OBOG5055.JPG', 'wallhaven-220382.jpg',
+                 'wallhaven-295153.jpg', 'wallhaven-605824.jpg']
+    for img_path in img_paths:
+        print("img_path: {}".format(img_path))
+        img = image.load_img(img_path, target_size=(224, 224))
 
-    preds = model.predict(x)
-    print('Predicted:', decode_predictions(preds))
+        x = image.img_to_array(img)
+        x = np.expand_dims(x, axis=0)
+
+        x = preprocess_input(x)
+
+        preds = model.predict(x)
+        print('Predicted:', decode_predictions(preds))
+        

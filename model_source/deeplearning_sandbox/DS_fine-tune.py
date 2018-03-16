@@ -77,7 +77,7 @@ def train(args):
     """Use transfer learning and fine-tuning to train a network on a new dataset"""
     nb_train_samples = get_nb_files(args.train_dir)
     nb_classes = len(glob.glob(args.train_dir + "/*"))
-    nb_val_samples = get_nb_files(args.val_dir)
+    # nb_val_samples = get_nb_files(args.val_dir)
     nb_epoch = int(args.nb_epoch)
     batch_size = int(args.batch_size)
 
@@ -124,9 +124,9 @@ def train(args):
     history_tl = model.fit_generator(
         train_generator,
         epochs=nb_epoch,
-        steps_per_epoch=nb_train_samples//batch_size,
+        steps_per_epoch=nb_train_samples // batch_size,
         validation_data=validation_generator,
-        validation_steps==nb_train_samples//batch_size,
+        validation_steps=nb_train_samples // batch_size,
         class_weight='auto')
 
     if not args.no_plot:
@@ -137,10 +137,10 @@ def train(args):
 
     history_ft = model.fit_generator(
         train_generator,
-        steps_per_epoch=nb_train_samples//batch_size,
+        steps_per_epoch=nb_train_samples // batch_size,
         epochs=nb_epoch,
         validation_data=validation_generator,
-        validation_steps==nb_train_samples//batch_size,
+        validation_steps=nb_train_samples // batch_size,
         class_weight='auto')
 
     model.save(args.output_model_file)

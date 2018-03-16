@@ -67,7 +67,8 @@ def create_image_lists(image_dir, testing_percentage, validation_percentage):
         if is_root_dir:
             is_root_dir = False
             continue
-        extensions = ['jpg', 'jpeg', 'JPG', 'JPEG']
+        extensions = ['jpg', 'jpeg']
+        # extensions = ['jpg', 'jpeg', 'JPG', 'JPEG']
         file_list = []
         dir_name = os.path.basename(sub_dir)
         if dir_name == image_dir:
@@ -248,7 +249,7 @@ def get_or_create_bottleneck(image_lists, label_name, index, image_dir,
 
 
 def cache_bottlenecks(image_lists, image_dir, bottleneck_dir,
-                      bottle_func):
+                      bottle_func, architecture='inception_v3'):
     """Ensures all the training, testing, and validation bottlenecks are cached.
 
     Because we're likely to read the same image multiple times (if there are no
@@ -265,7 +266,8 @@ def cache_bottlenecks(image_lists, image_dir, bottleneck_dir,
             category_list = label_lists[category]
             for index, unused_base_name in enumerate(category_list):
                 get_or_create_bottleneck(image_lists, label_name, index,
-                                         image_dir, category, bottleneck_dir, bottle_func)
+                                         image_dir, category, bottleneck_dir, bottle_func,
+                                         architecture)
 
                 how_many_bottlenecks += 1
                 if how_many_bottlenecks % 100 == 0:
@@ -289,24 +291,30 @@ class Image_Sequence(Sequence):
         return np.array(batch_x), np.array(batch_y)
 
 
-def cached_bottlenecks_sequence(image_lists, how_many, category,
-                                bottleneck_dir, image_dir, bottle_func, sequence=True):
-    """Retrieves bottleneck sequence for cached images.
+def get_cached_bottlenecks(image_lists, how_many, category,
+                           bottleneck_dir, image_dir, bottle_func, sequence=True,
+                           architecture='inception_v3'):
+    """Retrieves bottleneck sequence or batch for cached images.
 
     If no distortions are being applied, this function can retrieve the cached
     bottleneck values directly from disk for images. It picks a random set of
     images from the specified category.
     """
-    (bottlenecks, ground_truth, _) = get_random_cached_bottlenecks(
-        image_lists, -1, category, bottleneck_dir, image_dir, bottle_func)
     if sequence:
+        (bottlenecks, ground_truth, _) = get_random_cached_bottlenecks(
+            image_lists, -1, category, bottleneck_dir, image_dir, bottle_func,
+            architecture)
         return Image_Sequence(bottlenecks, ground_truth, how_many)
     else:
+        (bottlenecks, ground_truth, _) = get_random_cached_bottlenecks(
+            image_lists, how_many, category, bottleneck_dir, image_dir, bottle_func,
+            architecture)
         return (np.array(bottlenecks), np.array(ground_truth))
 
 
 def get_random_cached_bottlenecks(image_lists, how_many, category,
-                                  bottleneck_dir, image_dir, bottle_func):
+                                  bottleneck_dir, image_dir, bottle_func,
+                                  architecture='inception_v3'):
     """Retrieves bottleneck values for cached images.
 
     If no distortions are being applied, this function can retrieve the cached
@@ -328,11 +336,11 @@ def get_random_cached_bottlenecks(image_lists, how_many, category,
                                         image_dir, category)
             bottleneck = get_or_create_bottleneck(
                 image_lists, label_name, image_index, image_dir, category,
-                bottleneck_dir, bottle_func)
+                bottleneck_dir, bottle_func, architecture)
             bottlenecks.append(bottleneck)
-            y = np.zeros(class_count)
-            y[label_index] = 1
-            ground_truths.append(y)
+            # y = np.zeros(class_count)
+            # y[label_index] = 1
+            ground_truths.append(label_index)
             filenames.append(image_name)
     else:
         # Retrieve all bottlenecks.
@@ -343,11 +351,11 @@ def get_random_cached_bottlenecks(image_lists, how_many, category,
                                             image_dir, category)
                 bottleneck = get_or_create_bottleneck(
                     image_lists, label_name, image_index, image_dir, category,
-                    bottleneck_dir, bottle_func)
+                    bottleneck_dir, bottle_func, architecture)
                 bottlenecks.append(bottleneck)
-                y = np.zeros(class_count)
-                y[label_index] = 1
-                ground_truths.append(y)
+                # y = np.zeros(class_count)
+                # y[label_index] = 1
+                ground_truths.append(label_index)
                 filenames.append(image_name)
     return bottlenecks, ground_truths, filenames
 
@@ -423,8 +431,8 @@ def should_distort_images(flip_left_right, random_crop, random_scale,
 
 
 def add_input_distortions(flip_left_right, random_crop, random_scale,
-                          random_brightness, input_width, input_height,
-                          input_depth, input_mean, input_std):
+                          random_brightness, input_width=299, input_height=299,
+                          input_depth=3, input_mean=128, input_std=128):
     """Creates the operations to apply the specified distortions.
 
     During training it can help to improve the results if we run the images
