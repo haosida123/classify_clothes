@@ -1,5 +1,5 @@
 import os
-import sys
+# import sys
 import glob
 import argparse
 import matplotlib.pyplot as plt
@@ -59,6 +59,8 @@ def set_trainable_layers(trainable_layer_list, frozen_layer_list):
 
 
 def load_training_data(args):
+    ''' Need: Sub directory: args.model_dir and Json file: args.image_lists
+    to return loaded image_lists '''
     image_lists_path = os.path.join(args.model_dir, args.image_lists)
     if os.path.exists(image_lists_path):
         with open(image_lists_path, 'r') as f:
@@ -68,6 +70,11 @@ def load_training_data(args):
             'File not exist, please create bottlenecks using distorted_bottleneck.py first.')
         print(args.image_lists)
     return image_lists
+
+
+def compile_retrain_model(retrain_model, learning_rate=0.00005):
+    retrain_model.compile(optimizer=RMSprop(lr=learning_rate),
+                          loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
 
 def main(args):
@@ -104,6 +111,7 @@ def main(args):
             # img = image.load_img(file, target_size=target_size)
             return predict_from_img(base_model, img)
         if not os.path.exists(bottleneck_dir):
+            print('bottlenecks not found...')
             base_model = gen_base_model()
             cache_distort_bottlenecks(image_lists, args.image_dir,
                                       bottleneck_dir, bottle_pred_func)
@@ -136,32 +144,31 @@ def main(args):
         # tb_callback = TensorBoard(
         #     log_dir=args.model_dir, write_graph=True)
         callbacks_list = [checkpoint]  # , tb_callback]
-        retrain_model.compile(optimizer=RMSprop(lr=0.00002),
-                              loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+        # use compile function to compile optimizer, loss func and metrics
+        compile_retrain_model(retrain_model, args.learning_rate)
         history_tl = retrain_model.fit(
             x, y, validation_data=val, epochs=nb_epoch,
             batch_size=batch_size,
             # steps_per_epoch=nb_train_samples // batch_size,
             # validation_steps=nb_train_samples // batch_size,
             callbacks=callbacks_list)
+        retrain_model.load_weights(check_point_file)
         (val_x, val_y) = get_cached_bottlenecks(
             image_lists, -1, 'validation',
             bottleneck_dir, args.image_dir, bottle_pred_func, sequence=False)
-        retrain_model.test_on_batch(val_x, val_y)
+        print(retrain_model.test_on_batch(val_x, val_y))
         if not args.no_plot:
             plot_training(history_tl)
         # print(history_tl)
 
-    raise RuntimeError
-    model = add_final_layer(base_model.input, base_model.output, n_classes)
-
     if args.fine_tune:
+        model = None
         assert model.layers[FINE_TUNE_FINAL_LAYER_INDEX].name == FINE_TUNE_FINAL_LAYER_NAME
         set_trainable_layers(
             trainable_layer_list=model.layers[:
                                               FINE_TUNE_FINAL_LAYER_INDEX + 1],
             frozen_layer_list=model.layers[FINE_TUNE_FINAL_LAYER_INDEX + 1:])
-        model.compile(optimizer=SGD(lr=0.00003, momentum=0.9),
+        model.compile(optimizer=SGD(lr=0.00005, momentum=0.9),
                       loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
         history_ft = model.fit_generator(
@@ -184,38 +191,34 @@ def plot_training(history):
     plt.plot(epochs, acc, 'r.')
     plt.plot(epochs, val_acc, 'r')
     plt.title('Training and validation accuracy')
+    plt.savefig('transfer_learn_acc.png')
 
     plt.figure()
     plt.plot(epochs, loss, 'r.')
     plt.plot(epochs, val_loss, 'r-')
     plt.title('Training and validation loss')
-    plt.show()
+    plt.savefig('transfer_learn_loss.png')
 
 
 if __name__ == "__main__":
     a = argparse.ArgumentParser()
     a.add_argument(
-        "--image_dir", default=r'C:\NN\clothes_styles\warm_up_train_20180201\Images\skirt_length_labels')
+        "--image_dir", default=r'D:\NN\clothes_styles\base\Images\skirt_length_labels')
     a.add_argument(
-        "--model_dir", default=r'C:\tmp\warm_up_skirt_length')
+        "--model_dir", default=r'C:\tmp\skirt_length_labels')
     a.add_argument("--image_lists", default='distorted_image_lists.json')
     a.add_argument("--retrain_weights", default="retrain_weights.hdf5")
     a.add_argument("--nb_epoch", default=30)
-    a.add_argument("--batch_size", default=300)
+    a.add_argument("--batch_size", default=200)
+    a.add_argument("--learning_rate", default=0.00005)
     # a.add_argument("--val_batch_size", default=200)
     a.add_argument("--no_plot", default=False, action='store_true')
     a.add_argument("--transfer_learning", default=True)
     a.add_argument("--fine_tune", default=False)
-    a.add_argument('--testing_percentage', type=int, default=0)
-    a.add_argument('--validation_percentage', type=int, default=10)
 
     args = a.parse_args()
-    if args.image_dir is None:
-        a.print_help()
-        sys.exit(1)
-
-    if (not os.path.exists(args.image_dir)):
-        print("directories do not exist")
-        sys.exit(1)
+    # if (not os.path.exists(args.image_dir)):
+    #     print("directories do not exist")
+    #     sys.exit(1)
 
     main(args)

@@ -38,6 +38,13 @@ def predict_from_img(model, img):
     Returns:
       list of predicted labels and their probabilities
     """
+    if type(img) is list:
+        x = []
+        for i in img:
+            x.append(image.img_to_array(i))
+        x = preprocess_input(np.array(x))
+        x = model.predict(x, verbose=1)
+        return x
     x = image.img_to_array(img)
     x = np.expand_dims(x, axis=0)
     x = preprocess_input(x)
@@ -125,7 +132,7 @@ def get_or_create_bottleneck(
 
 
 def get_cached_bottlenecks(image_lists, how_many, category,
-                           bottleneck_dir, image_dir, bottle_func, sequence=True,
+                           bottleneck_dir, image_dir, bottle_func, sequence=False,
                            architecture='inception_v3'):
     """Retrieves bottleneck sequence or batch for cached images.
 
@@ -204,7 +211,7 @@ def get_random_cached_bottlenecks(image_lists, how_many, category,
                 # y[label_index] = 1
                 ground_truths.append(label_index)
                 filenames.append(image_name)
-    return bottlenecks, ground_truths, filenames
+    return np.array(bottlenecks), np.array(ground_truths), np.array(filenames)
 
 
 def cache_distort_bottlenecks(image_lists, bottle_func,

@@ -1,18 +1,25 @@
 
-import json
-import numpy as np
-
+# import json
+# import numpy as np
+from keras_fine_tune import add_final_layer
 # from keras.models import Sequential, Model
 # from keras.layers import Dense, Activation  #, GlobalAveragePooling2D
-# from keras.layers import Input
+from keras.layers import Input
 
 
 def main():
-    model_dir = r'C:\tmp\warm_up_skirt_length'
-    with open(model_dir + '/image_lists.json', 'r') as f:
-        image_lists = json.load(f)
-    n_classes = len(image_lists.keys())
-    
+    weights_file = 'retrain_weights.hdf5'
+    retrain_input_tensor = Input(shape=(2048,))
+    retrain_model = add_final_layer(
+        retrain_input_tensor, retrain_input_tensor, 6)
+    print('loading weights: {}'.format(weights_file))
+    retrain_model.load_weights(weights_file)
+    weights = retrain_model.get_weights()
+    print(weights)
+    retrain_model.layers[-1].set_weights(weights[-1])
+    for layer in retrain_model.layers:
+        print(layer.name)
+        print(layer)
     # inp = Input(shape=(2,))
     # x = Dense(5, activation='relu')(inp)
     # x = Dense(2, activation='softmax')(x)
@@ -28,7 +35,7 @@ def main():
     # model.fit(inp, out)
 
     # print(model.predict(np.array([[8,9]])))
-    
+
     # inp = Input(shape=(2,))
     # x = Dense(5, activation='relu')(inp)
     # x = Dense(2, activation='softmax')(x)
@@ -44,5 +51,6 @@ def main():
     # model.fit(inp, out)
 
     # print(model.predict(np.array([[8,9]])))
+
 
 main()
