@@ -73,7 +73,7 @@ def main(args):
                     print('label:', label_lists[label_category][pred_ind])
                     label_pred = [0 for _ in range(int(need_label_0))]
                     label_pred.extend(pred)
-                    label = ';'.join(['{:.4f}'.format(prob) for prob in label_pred])
+                    label = ';'.join(['{:.5f}'.format(prob) for prob in label_pred])
                     print('output:', label)
                 answer_writer.writerow([jpg_file, label_category, label])
 
@@ -81,7 +81,7 @@ def main(args):
 if __name__ == "__main__":
     a = argparse.ArgumentParser()
     a.add_argument(
-        "--csv_file", default=r'C:\NN\clothes_styles\rank\Tests\question.csv')
+        "--csv_file", default=r'C:\NN\clothes_styles\rank\Tests\answer.csv')
     a.add_argument("--retrain_base_dir", default=r'C:\tmp')
     a.add_argument("--rank_dir", default=r'C:\NN\clothes_styles\rank',
                    help='Dir to the folder for tests: Image')

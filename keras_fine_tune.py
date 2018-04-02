@@ -4,17 +4,19 @@ import glob
 import argparse
 import matplotlib.pyplot as plt
 import json
+import subprocess
 # import numpy as np
 
 # from keras import __version__
 # from keras.models import model_from_json
 # from keras.applications.inception_v3 import InceptionV3, preprocess_input
 #        , decode_predictions
-from keras.layers import Dense
+from keras.layers import Dense, Dropout
 from keras.optimizers import SGD, RMSprop
+from keras import regularizers
 from keras.models import Model
 # from keras.callbacks import TensorBoard
-from keras.callbacks import ModelCheckpoint
+from keras.callbacks import ModelCheckpoint, EarlyStopping
 # from keras import backend as K
 from keras.layers import Input
 
@@ -24,11 +26,13 @@ from keras_distorted_bottleneck import \
     cache_distort_bottlenecks, get_cached_bottlenecks, predict_from_img, gen_base_model
 
 IM_WIDTH, IM_HEIGHT = 299, 299  # fixed size for InceptionV3
-FC_SIZE = 2048
+# IM_WIDTH, IM_HEIGHT = 224, 224
 # BASE_MODEL_OUTPUT_LAYER_INDEX = 311
 # BASE_MODEL_OUTPUT_LAYER_NAME = 'global_average_pooling2d_1'
 FINE_TUNE_FINAL_LAYER_INDEX = 279
 FINE_TUNE_FINAL_LAYER_NAME = 'mixed9'
+BOTTLENECK_DIM = 1536
+# BOTTLENECK_DIM = 2048
 
 
 def get_nb_files(directory):
@@ -43,12 +47,33 @@ def get_nb_files(directory):
 
 
 def add_final_layer(inputs, outputs, n_classes):
-    x = Dense(FC_SIZE, activation='relu')(outputs)
-    x = Dense(FC_SIZE // 2, activation='relu')(x)
-    x = Dense(FC_SIZE // 4, activation='relu')(x)
+    # x = Dropout(0.02)(outputs)
+    x = Dense(4, activation='relu')(outputs)
+    #           activity_regularizer=regularizers.l2(0.00001))(x)
+    # x = Dropout(0.2)(x)
+    # x = Dense(32, activation='relu')(x)
+    # x = Dropout(0.02)(x)
+    # x = Dense(16, activation='relu')(x)
+    # x = Dropout(0.01)(x)
     base_predictions = Dense(n_classes, activation='softmax')(x)
     # kernel_initializer='truncated_normal', bias_initializer='truncated_normal',
     return Model(inputs=inputs, outputs=base_predictions)
+
+
+def add_final_layer_best(inputs, outputs, n_classes):
+    x = Dropout(0.1)(outputs)
+    x = Dense(1024, activation='relu')(x)
+    # x = Dropout(0.05)(x)
+    x = Dense(512, activation='relu')(x)
+    # x = Dropout(0.05)(x)
+    base_predictions = Dense(n_classes, activation='softmax')(x)
+    # kernel_initializer='truncated_normal', bias_initializer='truncated_normal',
+    return Model(inputs=inputs, outputs=base_predictions)
+
+
+def compile_retrain_model(retrain_model, learning_rate=0.00003):
+    retrain_model.compile(optimizer=RMSprop(lr=learning_rate),
+                          loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
 
 def set_trainable_layers(trainable_layer_list, frozen_layer_list):
@@ -69,12 +94,15 @@ def load_training_data(args):
         print(
             'File not exist, please create bottlenecks using distorted_bottleneck.py first.')
         print(args.image_lists)
+    n_train, n_val, n_test = 0, 0, 0
+    for label in image_lists.keys():
+        n_train += len(image_lists[label]['training'])
+        n_val += len(image_lists[label]['validation'])
+        n_test += len(image_lists[label]['testing'])
+    print('{}: train: {} samples, val: {} samples, test: {} samples.'.format(
+        args.image_lists, n_train, n_val, n_test
+    ))
     return image_lists
-
-
-def compile_retrain_model(retrain_model, learning_rate=0.00005):
-    retrain_model.compile(optimizer=RMSprop(lr=learning_rate),
-                          loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
 
 def main(args):
@@ -93,15 +121,18 @@ def main(args):
     if args.transfer_learning:
         # use bottleneck, here the model must be identical to the original top layer
         # print(base_model.output.shape)
-        retrain_input_tensor = Input(shape=(2048,))
-        print(retrain_input_tensor, retrain_input_tensor.shape)
+        retrain_input_tensor = Input(shape=(BOTTLENECK_DIM,))
+        print('making transfer layers')
         retrain_model = add_final_layer(
             retrain_input_tensor, retrain_input_tensor, n_classes)
         check_point_file = os.path.join(
             args.model_dir, args.retrain_weights)
         if os.path.exists(check_point_file):
             print('loading checkpoint {}'.format(check_point_file))
-            retrain_model.load_weights(check_point_file)
+            try:
+                retrain_model.load_weights(check_point_file)
+            except Exception as e:
+                print('checkpoint loading failed, write new checkpoint')
 
         bottleneck_dir = os.path.join(
             args.model_dir, 'distorted_bottlenecks/')
@@ -132,34 +163,42 @@ def main(args):
 
         # for i in range(nb_train_samples // batch_size * nb_epoch):
         #     print('step: {}'.format(i))
+        print('\ngenerating training and validation set')
         (x, y) = get_cached_bottlenecks(
             image_lists, -1, 'training',
             bottleneck_dir, args.image_dir, bottle_pred_func, sequence=False)
         val = get_cached_bottlenecks(
             image_lists, -1, 'validation',
             bottleneck_dir, args.image_dir, bottle_pred_func, sequence=False)
-        checkpoint = ModelCheckpoint(check_point_file, monitor='val_acc',
-                                     verbose=1, save_best_only=True, mode='max',
+        checkpoint = ModelCheckpoint(check_point_file,
+                                     verbose=0, save_best_only=True,
                                      save_weights_only=True)
+        earlystopping = EarlyStopping(patience=args.earlystopping_patience,
+                                      monitor='val_loss')
         # tb_callback = TensorBoard(
         #     log_dir=args.model_dir, write_graph=True)
-        callbacks_list = [checkpoint]  # , tb_callback]
+        callbacks_list = [checkpoint, earlystopping]  # , tb_callback]
         # use compile function to compile optimizer, loss func and metrics
         compile_retrain_model(retrain_model, args.learning_rate)
+        print('begin training')
         history_tl = retrain_model.fit(
             x, y, validation_data=val, epochs=nb_epoch,
             batch_size=batch_size,
             # steps_per_epoch=nb_train_samples // batch_size,
             # validation_steps=nb_train_samples // batch_size,
-            callbacks=callbacks_list)
+            callbacks=callbacks_list).history
         retrain_model.load_weights(check_point_file)
-        (val_x, val_y) = get_cached_bottlenecks(
-            image_lists, -1, 'validation',
+        (test_x, test_y) = get_cached_bottlenecks(
+            image_lists, -1, 'testing',
             bottleneck_dir, args.image_dir, bottle_pred_func, sequence=False)
-        print(retrain_model.test_on_batch(val_x, val_y))
+        test = retrain_model.test_on_batch(test_x, test_y)
+        print(test)
+        history_tl['test_loss'], history_tl['test_acc'] = test[0].tolist(
+        ), test[1].tolist()
         if not args.no_plot:
-            plot_training(history_tl)
-        # print(history_tl)
+            plot_training(history_tl, args.model_dir)
+        with open(os.path.join(args.model_dir, 'transfer_learn_history.txt'), 'w') as f:
+            json.dump(history_tl, f)
 
     if args.fine_tune:
         model = None
@@ -176,41 +215,73 @@ def main(args):
             epochs=nb_epoch,
             class_weight='auto')
         if not args.no_plot:
-            plot_training(history_ft)
+            plot_training(history_ft, args.model_dir)
 
     # model.save(os.path.join(args.model_dir, 'inceptionv3-ft.model'))
 
 
-def plot_training(history):
-    acc = history.history['acc']
-    val_acc = history.history['val_acc']
-    loss = history.history['loss']
-    val_loss = history.history['val_loss']
+def plot_training(history, folder_dir):
+    acc = history['acc']
+    val_acc = history['val_acc']
+    loss = history['loss']
+    val_loss = history['val_loss']
+    test_acc = history['test_acc']
+    test_loss = history['test_loss']
     epochs = range(len(acc))
 
-    plt.plot(epochs, acc, 'r.')
-    plt.plot(epochs, val_acc, 'r')
-    plt.title('Training and validation accuracy')
-    plt.savefig('transfer_learn_acc.png')
+    plt.rc('font', **{'family': 'sans-serif', 'sans-serif': 'Arial',
+                      'size': 10})
+    width = 3.487
+    height = width * 0.618
+    fig, ax1 = plt.subplots()
+    fig.set_size_inches(width, height)
+    fig.subplots_adjust(left=.18, bottom=.2, right=.9, top=.95)
 
-    plt.figure()
-    plt.plot(epochs, loss, 'r.')
-    plt.plot(epochs, val_loss, 'r-')
-    plt.title('Training and validation loss')
+    ax1.plot(epochs, acc, 'g', label='training')
+    ax1.plot(epochs, val_acc, 'b--', label='validation')
+    ax1.plot(epochs[-1], test_acc, 'k*', label='testing')
+    plt.xlabel('epoch')
+    plt.ylabel('accuracy')
+    ax1.legend(loc='best')
+    plt.savefig('transfer_learn_acc.png')
+    filename = os.path.join(folder_dir, 'transfer_learn_acc')
+    plt.savefig(filename + '.pdf')
+    plt.savefig(filename + '.svg')
+    plt.close(fig)
+    subprocess.call(["explorer.exe", filename + ".pdf"])
+
+    fig, ax1 = plt.subplots()
+    fig.set_size_inches(width, height)
+    fig.subplots_adjust(left=.18, bottom=.2, right=.9, top=.95)
+    ax1.plot(epochs[1:], loss[1:], 'g', label='training')
+    ax1.plot(epochs[1:], val_loss[1:], 'b--', label='validation')
+    ax1.plot(epochs[-1], test_loss, 'k*', label='testing')
+    plt.xlabel('epoch')
+    plt.ylabel('loss')
+    ax1.legend(loc='best')
     plt.savefig('transfer_learn_loss.png')
+    filename = os.path.join(folder_dir, 'transfer_learn_loss')
+    plt.savefig(filename + '.pdf')
+    plt.savefig(filename + '.svg')
+    plt.close(fig)
+    subprocess.call(["explorer.exe", filename + ".pdf"])
 
 
 if __name__ == "__main__":
     a = argparse.ArgumentParser()
     a.add_argument(
-        "--image_dir", default=r'D:\NN\clothes_styles\base\Images\skirt_length_labels')
+        "--image_dir", default=r'D:\NN\clothes_styles\warm_up_train_20180201\Images\skirt_length_labels')
     a.add_argument(
-        "--model_dir", default=r'C:\tmp\skirt_length_labels')
-    a.add_argument("--image_lists", default='distorted_image_lists.json')
+        "--model_dir", default=r'C:\tmp\InceptionResNet\warm_up_skirt_length')
+    # a.add_argument(
+    #     "--model_dir", default=r'C:\tmp\skirt_length_labels')
+    # a.add_argument("--image_lists", default='distorted_image_lists.json')
+    a.add_argument("--image_lists", default='image_lists.json')
     a.add_argument("--retrain_weights", default="retrain_weights.hdf5")
-    a.add_argument("--nb_epoch", default=30)
+    a.add_argument("--nb_epoch", default=10000)
     a.add_argument("--batch_size", default=200)
     a.add_argument("--learning_rate", default=0.00005)
+    a.add_argument("--earlystopping_patience", default=100)
     # a.add_argument("--val_batch_size", default=200)
     a.add_argument("--no_plot", default=False, action='store_true')
     a.add_argument("--transfer_learning", default=True)

@@ -26,6 +26,7 @@ IM_WIDTH, IM_HEIGHT = 299, 299  # fixed size for InceptionV3
 # BASE_MODEL_OUTPUT_LAYER_NAME = 'global_average_pooling2d_1'
 FINE_TUNE_FINAL_LAYER_INDEX = 279
 FINE_TUNE_FINAL_LAYER_NAME = 'mixed9'
+BOTTLENECK_DIM = 1536
 
 
 def make_model(base_model, final_layer_func, final_weights_file, n_classes):
@@ -84,7 +85,7 @@ def main(args):
             # img = image.load_img(file, target_size=target_size)
     # model.save(os.path.join(args.model_dir, 'inceptionv3-ft.model'))
     else:
-        retrain_input_tensor = Input(shape=(2048,))
+        retrain_input_tensor = Input(shape=(BOTTLENECK_DIM,))
         retrain_model = add_final_layer(
             retrain_input_tensor, retrain_input_tensor, n_classes)
         print('loading weights: {}'.format(weights_file))
@@ -97,50 +98,25 @@ def main(args):
             # img = image.load_img(file, target_size=target_size)
             return predict_from_img(base_model, img)
 
-        print('\ntesting data:')
-        (test_x, test_y, files) = get_random_cached_bottlenecks(
-            image_lists, -1, 'testing',
-            bottleneck_dir, args.image_dir, bottle_pred_func)
-        print(retrain_model.test_on_batch(test_x, test_y))
-        preds = retrain_model.predict_on_batch(np.array(test_x))
-        pred_classes = preds.argmax(axis=-1)
-        ind = np.nonzero(np.array(pred_classes) != np.array(test_y))
-        print('truths:', test_y[ind])
-        print('preds:', pred_classes[ind], preds[ind])
-        for file in files[ind]:
-            print(file)
-
-        print('\nvalidation data:')
-        (test_x, test_y, files) = get_random_cached_bottlenecks(
-            image_lists, -1, 'validation',
-            bottleneck_dir, args.image_dir, bottle_pred_func)
-        print(retrain_model.test_on_batch(test_x, test_y))
-        preds = retrain_model.predict_on_batch(np.array(test_x))
-        pred_classes = preds.argmax(axis=-1)
-        ind = np.nonzero(np.array(pred_classes) != np.array(test_y))
-        print('truths:', test_y[ind])
-        print('preds:', pred_classes[ind], preds[ind])
-        for file in files[ind]:
-            print(file)
-
-        print('\ntraining data:')
-        (test_x, test_y, files) = get_random_cached_bottlenecks(
-            image_lists, -1, 'training',
-            bottleneck_dir, args.image_dir, bottle_pred_func)
-        print(retrain_model.test_on_batch(test_x, test_y))
-        preds = retrain_model.predict_on_batch(np.array(test_x))
-        pred_classes = preds.argmax(axis=-1)
-        ind = np.nonzero(np.array(pred_classes) != np.array(test_y))
-        print('truths:', test_y[ind])
-        print('preds:', pred_classes[ind], preds[ind])
-        for file in files[ind]:
-            print(file)
+        for category in ['testing', 'validation', 'training']:
+            print('\n{} data:'.format(category))
+            (test_x, test_y, files) = get_random_cached_bottlenecks(
+                image_lists, -1, category,
+                bottleneck_dir, args.image_dir, bottle_pred_func)
+            print(retrain_model.test_on_batch(test_x, test_y))
+            preds = retrain_model.predict_on_batch(np.array(test_x))
+            pred_classes = preds.argmax(axis=-1)
+            ind = np.nonzero(np.array(pred_classes) != np.array(test_y))
+            print('truths:', test_y[ind])
+            print('preds:', pred_classes[ind], preds[ind])
+            # for file in files[ind]:
+            #     print(file)
 
 
 if __name__ == "__main__":
     a = argparse.ArgumentParser()
     a.add_argument(
-        "--model_dir", default=r'C:\tmp\warm_up_skirt_length')
+        "--model_dir", default=r'C:\tmp\InceptionResNet\warm_up_skirt_length')
     a.add_argument("--image_lists", default='image_lists.json')
     a.add_argument("--weights", default="retrain_weights.hdf5")
     # a.add_argument("--val_batch_size", default=200)
