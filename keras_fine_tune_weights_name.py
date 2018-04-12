@@ -48,7 +48,7 @@ def get_nb_files(directory):
 
 def add_final_layer(inputs, outputs, n_classes):
     # x = Dropout(0.02)(outputs)
-    x = Dense(64, activation='relu')(outputs)
+    x = Dense(48, activation='relu')(outputs)
     #           activity_regularizer=regularizers.l2(0.00001))(x)
     # x = Dropout(0.2)(x)
     # x = Dense(32, activation='relu')(x)
@@ -126,13 +126,13 @@ def main(args):
         retrain_model = add_final_layer(
             retrain_input_tensor, retrain_input_tensor, n_classes)
         check_point_file = os.path.join(
-            args.model_dir, args.retrain_weights)
-        if os.path.exists(check_point_file):
-            print('...loading checkpoint {}'.format(check_point_file))
-            try:
-                retrain_model.load_weights(check_point_file)
-            except Exception as e:
-                print('...checkpoint loading failed, write new checkpoint')
+            args.model_dir, args.retrain_weights + '.hdf5')
+        # if os.path.exists(check_point_file):
+        #     print('...loading checkpoint {}'.format(check_point_file))
+        #     try:
+        #         retrain_model.load_weights(check_point_file)
+        #     except Exception as e:
+        #         print('...checkpoint loading failed, write new checkpoint')
 
         bottleneck_dir = os.path.join(
             args.model_dir, 'distorted_bottlenecks/')
@@ -193,12 +193,17 @@ def main(args):
             image_lists, -1, 'testing',
             bottleneck_dir, args.image_dir, bottle_pred_func, sequence=False)
         test = retrain_model.test_on_batch(test_x, test_y)
-        print('\n...test loss: {0:.3f}, tess acc: {1:.3f}\n'.format(*test))
+        print('\n...test loss: {0:.4f}, tess acc: {1:.4f}\n'.format(*test))
+        args.retrain_weights = args.retrain_weights +\
+            '_los{0:.4f}_acc{1:.4f}'.format(*test)
+        retrain_model.save_weights(os.path.join(
+            args.model_dir, args.retrain_weights + '.hdf5'))
         history_tl['test_loss'], history_tl['test_acc'] = test[0].tolist(
         ), test[1].tolist()
         if not args.no_plot:
-            plot_training(history_tl, args.model_dir)
-        with open(os.path.join(args.model_dir, 'transfer_learn_history.txt'), 'w') as f:
+            plot_training(history_tl, args.model_dir, args.retrain_weights)
+        with open(os.path.join(args.model_dir,
+                               args.retrain_weights + 'tl_his.txt'), 'w') as f:
             json.dump(history_tl, f)
 
     if args.fine_tune:
@@ -221,7 +226,7 @@ def main(args):
     # model.save(os.path.join(args.model_dir, 'inceptionv3-ft.model'))
 
 
-def plot_training(history, folder_dir):
+def plot_training(history, folder_dir, fname):
     acc = history['acc']
     val_acc = history['val_acc']
     loss = history['loss']
@@ -244,12 +249,11 @@ def plot_training(history, folder_dir):
     plt.xlabel('epoch')
     plt.ylabel('accuracy')
     ax1.legend(loc='best')
-    plt.savefig('transfer_learn_acc.png')
-    filename = os.path.join(folder_dir, 'transfer_learn_acc')
+    filename = os.path.join(folder_dir, fname + '_tl_acc')
     plt.savefig(filename + '.pdf')
-    plt.savefig(filename + '.svg')
+    # plt.savefig(filename + '.svg')
     plt.close(fig)
-    subprocess.call(["explorer.exe", filename + ".pdf"])
+    # subprocess.call(["explorer.exe", filename + ".pdf"])
 
     fig, ax1 = plt.subplots()
     fig.set_size_inches(width, height)
@@ -260,12 +264,11 @@ def plot_training(history, folder_dir):
     plt.xlabel('epoch')
     plt.ylabel('loss')
     ax1.legend(loc='best')
-    plt.savefig('transfer_learn_loss.png')
-    filename = os.path.join(folder_dir, 'transfer_learn_loss')
+    filename = os.path.join(folder_dir, fname + '_tl__loss')
     plt.savefig(filename + '.pdf')
-    plt.savefig(filename + '.svg')
+    # plt.savefig(filename + '.svg')
     plt.close(fig)
-    subprocess.call(["explorer.exe", filename + ".pdf"])
+    # subprocess.call(["explorer.exe", filename + ".pdf"])
 
 
 if __name__ == "__main__":
@@ -278,11 +281,11 @@ if __name__ == "__main__":
     #     "--model_dir", default=r'C:\tmp\skirt_length_labels')
     a.add_argument("--image_lists", default='distorted_image_lists.json')
     # a.add_argument("--image_lists", default='image_lists.json')
-    a.add_argument("--retrain_weights", default="retrain_weights.hdf5")
+    a.add_argument("--retrain_weights", default=r"dense48dense12\weights")
     a.add_argument("--nb_epoch", default=10000, type=int)
-    a.add_argument("--batch_size", default=200, type=int)
+    a.add_argument("--batch_size", default=130, type=int)
     a.add_argument("--learning_rate", default=0.00005, type=int)
-    a.add_argument("--earlystopping_patience", default=100, type=int)
+    a.add_argument("--earlystopping_patience", default=60, type=int)
     # a.add_argument("--val_batch_size", default=200)
     a.add_argument("--no_plot", default=False, action='store_true')
     a.add_argument("--transfer_learning", default=True)
