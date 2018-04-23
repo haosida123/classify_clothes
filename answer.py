@@ -18,12 +18,12 @@ from keras.preprocessing import image
 from keras_distorted_bottleneck import \
     predict_from_img, gen_base_model
 from keras_fine_tune import \
-    add_final_layer
+    add_final_layer, BOTTLENECK_DIM
 
 
 def make_model(base_model, final_layer_func, final_weights_file, n_classes):
     model = final_layer_func(base_model.input, base_model.output, n_classes)
-    retrain_input_tensor = Input(shape=(2048,))
+    retrain_input_tensor = Input(shape=(BOTTLENECK_DIM,))
     retrain_model = final_layer_func(
         retrain_input_tensor, retrain_input_tensor, n_classes)
     retrain_model.load_weights(final_weights_file)
@@ -81,9 +81,9 @@ def main(args):
 if __name__ == "__main__":
     a = argparse.ArgumentParser()
     a.add_argument(
-        "--csv_file", default=r'C:\NN\clothes_styles\rank\Tests\answer.csv')
-    a.add_argument("--retrain_base_dir", default=r'C:\tmp')
-    a.add_argument("--rank_dir", default=r'C:\NN\clothes_styles\rank',
+        "--csv_file", default=r'C:\NN\clothes_styles\z_rank\Tests\answer.csv')
+    a.add_argument("--retrain_base_dir", default=r'C:\tmp\InceptionResNet')
+    a.add_argument("--rank_dir", default=r'C:\NN\clothes_styles\z_rank',
                    help='Dir to the folder for tests: Image')
     # a.add_argument("--image_lists", default='image_lists.json')
     a.add_argument("--weights", default="retrain_weights.hdf5")

@@ -23,7 +23,8 @@ from keras.layers import Input
 # from keras.preprocessing import image
 
 from keras_distorted_bottleneck import \
-    cache_distort_bottlenecks, get_cached_bottlenecks, predict_from_img, gen_base_model
+    cache_distort_bottlenecks, get_cached_bottlenecks,\
+    predict_from_img, gen_base_model, ensure_dir_exists
 
 IM_WIDTH, IM_HEIGHT = 299, 299  # fixed size for InceptionV3
 # IM_WIDTH, IM_HEIGHT = 224, 224
@@ -48,24 +49,13 @@ def get_nb_files(directory):
 
 def add_final_layer(inputs, outputs, n_classes):
     # x = Dropout(0.02)(outputs)
-    x = Dense(48, activation='relu')(outputs)
+    x = Dense(128, activation='relu')(outputs)
     #           activity_regularizer=regularizers.l2(0.00001))(x)
     # x = Dropout(0.2)(x)
     # x = Dense(32, activation='relu')(x)
     # x = Dropout(0.02)(x)
     x = Dense(12, activation='relu')(x)
     # x = Dropout(0.01)(x)
-    base_predictions = Dense(n_classes, activation='softmax')(x)
-    # kernel_initializer='truncated_normal', bias_initializer='truncated_normal',
-    return Model(inputs=inputs, outputs=base_predictions)
-
-
-def add_final_layer_best(inputs, outputs, n_classes):
-    x = Dropout(0.1)(outputs)
-    x = Dense(1024, activation='relu')(x)
-    # x = Dropout(0.05)(x)
-    x = Dense(512, activation='relu')(x)
-    # x = Dropout(0.05)(x)
     base_predictions = Dense(n_classes, activation='softmax')(x)
     # kernel_initializer='truncated_normal', bias_initializer='truncated_normal',
     return Model(inputs=inputs, outputs=base_predictions)
@@ -125,14 +115,6 @@ def main(args):
         print('...making transfer layers')
         retrain_model = add_final_layer(
             retrain_input_tensor, retrain_input_tensor, n_classes)
-        check_point_file = os.path.join(
-            args.model_dir, args.retrain_weights + '.hdf5')
-        # if os.path.exists(check_point_file):
-        #     print('...loading checkpoint {}'.format(check_point_file))
-        #     try:
-        #         retrain_model.load_weights(check_point_file)
-        #     except Exception as e:
-        #         print('...checkpoint loading failed, write new checkpoint')
 
         bottleneck_dir = os.path.join(
             args.model_dir, 'distorted_bottlenecks/')
@@ -170,6 +152,9 @@ def main(args):
         val = get_cached_bottlenecks(
             image_lists, -1, 'validation',
             bottleneck_dir, args.image_dir, bottle_pred_func, sequence=False)
+        check_point_file = os.path.join(
+            args.model_dir, args.retrain_weights + '.hdf5')
+        ensure_dir_exists(os.path.split(check_point_file)[0])
         checkpoint = ModelCheckpoint(check_point_file,
                                      verbose=0, save_best_only=True,
                                      save_weights_only=True)
@@ -281,11 +266,11 @@ if __name__ == "__main__":
     #     "--model_dir", default=r'C:\tmp\skirt_length_labels')
     a.add_argument("--image_lists", default='distorted_image_lists.json')
     # a.add_argument("--image_lists", default='image_lists.json')
-    a.add_argument("--retrain_weights", default=r"dense48dense12\weights")
+    a.add_argument("--retrain_weights", default=r"dense128dense12\weights")
     a.add_argument("--nb_epoch", default=10000, type=int)
-    a.add_argument("--batch_size", default=130, type=int)
-    a.add_argument("--learning_rate", default=0.00005, type=int)
-    a.add_argument("--earlystopping_patience", default=60, type=int)
+    a.add_argument("--batch_size", default=48, type=int)
+    a.add_argument("--learning_rate", default=0.00001, type=int)
+    a.add_argument("--earlystopping_patience", default=80, type=int)
     # a.add_argument("--val_batch_size", default=200)
     a.add_argument("--no_plot", default=False, action='store_true')
     a.add_argument("--transfer_learning", default=True)

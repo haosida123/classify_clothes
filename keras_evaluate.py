@@ -116,9 +116,9 @@ def main(args):
 if __name__ == "__main__":
     a = argparse.ArgumentParser()
     a.add_argument(
-        "--model_dir", default=r'C:\tmp\InceptionResNet\warm_up_skirt_length')
+        "--model_dir", default=r'C:\tmp\InceptionResNet\skirt_length_labels')
     a.add_argument("--image_lists", default='image_lists.json')
-    a.add_argument("--weights", default="retrain_weights.hdf5")
+    a.add_argument("--weights", default="weights_los0.8319_acc0.6948.hdf5")
     # a.add_argument("--val_batch_size", default=200)
     a.add_argument("--make_new_model", default=False, action='store_true')
     a.add_argument(

@@ -48,7 +48,7 @@ def get_nb_files(directory):
 
 def add_final_layer(inputs, outputs, n_classes):
     # x = Dropout(0.02)(outputs)
-    x = Dense(64, activation='relu')(outputs)
+    x = Dense(128, activation='relu')(outputs)
     #           activity_regularizer=regularizers.l2(0.00001))(x)
     # x = Dropout(0.2)(x)
     # x = Dense(32, activation='relu')(x)
